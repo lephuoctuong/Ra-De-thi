@@ -1,5 +1,5 @@
 export default async function handler(req: any, res: any) {
-  // 1. Thiết lập CORS cho phép giao diện gửi yêu cầu
+  // 1. Thiết lập CORS
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -8,7 +8,6 @@ export default async function handler(req: any, res: any) {
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
   );
 
-  // Xử lý truy vấn kiểm tra CORS (Preflight)
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -18,7 +17,7 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    // 2. Lấy Gemini API Key từ cấu hình Vercel
+    // 2. Lấy Gemini API Key
     const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: 'Chưa cấu hình GEMINI_API_KEY trên Vercel.' });
@@ -27,8 +26,8 @@ export default async function handler(req: any, res: any) {
     const { text, fileData, mimeType, prompt } = req.body || {};
     const userPrompt = prompt || "Hãy trích xuất và số hóa toàn bộ nội dung văn bản/tài liệu này một cách chính xác nhất.";
 
-    // 3. Chuẩn bị dữ liệu gửi tới Google Gemini API
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    // 3. Đường dẫn API cập nhật sang model gemini-2.5-flash
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
     
     const parts: any[] = [];
     
@@ -43,7 +42,7 @@ export default async function handler(req: any, res: any) {
     
     parts.push({ text: fileData ? userPrompt : `${userPrompt}\n\nNội dung:\n${text || ''}` });
 
-    // 4. Gọi tới API Gemini
+    // 4. Gửi yêu cầu tới Google Gemini
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -60,7 +59,7 @@ export default async function handler(req: any, res: any) {
 
     const extractedText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-    // 5. Trả kết quả số hóa về cho trang web
+    // 5. Trả kết quả về cho giao diện
     return res.status(200).json({ 
       text: extractedText, 
       result: extractedText,
