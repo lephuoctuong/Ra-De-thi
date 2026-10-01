@@ -17,7 +17,6 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    // 2. Lấy Gemini API Key từ Vercel
     const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: 'Chưa cấu hình GEMINI_API_KEY trên Vercel.' });
@@ -26,45 +25,45 @@ export default async function handler(req: any, res: any) {
     const { text, fileData, mimeType, prompt } = req.body || {};
     const userPrompt = prompt || "Hãy trích xuất và số hóa toàn bộ nội dung văn bản/tài liệu này một cách chính xác nhất.";
 
-    // 3. Sử dụng chính xác model gemini-3.8-flash theo yêu cầu của Google API
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
-    
     const parts: any[] = [];
-    
     if (fileData && mimeType) {
       parts.push({
-        inline_data: {
-          mime_type: mimeType,
-          data: fileData
-        }
+        inline_data: { mime_type: mimeType, data: fileData }
       });
     }
-    
     parts.push({ text: fileData ? userPrompt : `${userPrompt}\n\nNội dung:\n${text || ''}` });
 
-    // 4. Gửi yêu cầu xử lý
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts }]
-      })
-    });
+    // Danh sách các model theo thứ tự ưu tiên (Tự động thử model tiếp theo nếu Google bị quá tải)
+    const models = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+    let lastErrorMessage = '';
 
-    const data = await response.json();
+    for (const model of models) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts }] })
+        });
 
-    if (!response.ok) {
-      return res.status(response.status).json({ error: data.error?.message || 'Lỗi khi gọi Gemini API' });
+        const data = await response.json();
+
+        if (response.ok) {
+          const extractedText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          return res.status(200).json({ 
+            text: extractedText, 
+            result: extractedText,
+            success: true 
+          });
+        }
+
+        lastErrorMessage = data.error?.message || 'Lỗi hệ thống AI';
+      } catch (err: any) {
+        lastErrorMessage = err.message;
+      }
     }
 
-    const extractedText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-    // 5. Trả kết quả số hóa về giao diện
-    return res.status(200).json({ 
-      text: extractedText, 
-      result: extractedText,
-      success: true 
-    });
+    return res.status(503).json({ error: `Máy chủ Google đang quá tải: ${lastErrorMessage}` });
 
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Lỗi máy chủ nội bộ' });
