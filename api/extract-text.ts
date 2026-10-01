@@ -103,3 +103,4 @@ export const aiService = {
     return await res.json();
   }
 };
+export default app;
