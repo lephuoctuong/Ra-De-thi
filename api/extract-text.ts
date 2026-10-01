@@ -1,5 +1,5 @@
 export default async function handler(req: any, res: any) {
-  // 1. Thiết lập CORS cho phép giao diện gửi yêu cầu
+  // 1. Thiết lập CORS cho phép giao diện kết nối
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -17,6 +17,7 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
+    // 2. Kiểm tra API Key từ Vercel
     const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: 'Chưa cấu hình GEMINI_API_KEY trên Vercel.' });
@@ -33,8 +34,8 @@ export default async function handler(req: any, res: any) {
     }
     parts.push({ text: fileData ? userPrompt : `${userPrompt}\n\nNội dung:\n${text || ''}` });
 
-    // Danh sách các model theo thứ tự ưu tiên (Tự động thử model tiếp theo nếu Google bị quá tải)
-    const models = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+    // 3. Sử dụng các model chuẩn chính thức từ Google Gemini
+    const models = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.0-flash-lite'];
     let lastErrorMessage = '';
 
     for (const model of models) {
@@ -57,13 +58,13 @@ export default async function handler(req: any, res: any) {
           });
         }
 
-        lastErrorMessage = data.error?.message || 'Lỗi hệ thống AI';
+        lastErrorMessage = data.error?.message || `Model ${model} không phản hồi`;
       } catch (err: any) {
         lastErrorMessage = err.message;
       }
     }
 
-    return res.status(503).json({ error: `Máy chủ Google đang quá tải: ${lastErrorMessage}` });
+    return res.status(500).json({ error: `Lỗi kết nối Gemini API: ${lastErrorMessage}` });
 
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Lỗi máy chủ nội bộ' });
