@@ -16,7 +16,7 @@ import { EXTRACTION_INVALID_MESSAGE, isValidExtractedText, isValidSourceText } f
 
 export const app = express();
 
-const BUILD_ID = "2026-10-source-validation-v10";
+const BUILD_ID = "2026-10-source-validation-v11";
 const PRIMARY_GEMINI_MODEL = "gemini-3.8-flash";
 
 // Vercel Express entrypoint: Vercel detects this root server.ts and its default export.

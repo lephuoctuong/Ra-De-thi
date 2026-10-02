@@ -254,9 +254,9 @@ Deploy with Build Command `npm run build:web`, Output Directory `dist`, Node.js 
 Verify `https://YOUR-DOMAIN/api/health` before testing Gemini. A successful V9 deployment returns `build: 2026-10-source-validation-v9`.
 
 
-## Deployment note — V10
+## Deployment note — V11
 - Vercel uses the single root `server.ts` Express entrypoint.
 - The previous `api/[...path].ts` wrapper is removed.
 - Vite builds the browser application into root `public/`, which Vercel serves as static files.
-- `/api/health` must return build `2026-10-source-validation-v10`.
+- `/api/health` must return build `2026-10-source-validation-v11`.
 - `GEMINI_API_KEY` remains server-side only.
