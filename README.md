@@ -190,6 +190,21 @@ ZIP này được tối ưu để **không phụ thuộc cứng vào một văn 
 
 
 
+## Deployment note — V7 Vercel API routing fix
+
+This package uses the current Vercel Express deployment model: the root `server.ts` exports the Express app as the **default export**. The previous `api/[...path].ts` catch-all wrapper has been removed because it could leave the static Vite shell deployed while `/api/*` requests returned HTTP 404.
+
+V7 also adds a diagnostic endpoint:
+
+`GET /api/health`
+
+A successful deployment returns HTTP 200 JSON containing `build: 2026-10-source-validation-v7`. Test this endpoint before testing Gemini.
+
+Vercel Build Command: `npm run build:web`
+Output Directory: `dist`
+Node.js: `>=22`
+Environment Variable: `GEMINI_API_KEY` (server-side only)
+
 ## Deployment note — source validation v2
 
 This build contains a self-healing migration for legacy `localStorage` values that were incorrectly storing the extraction fallback text in Mục 1/Mục 2. It also marks the HTML entry point as `no-store` on Vercel to reduce stale-shell issues.

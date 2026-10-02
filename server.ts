@@ -7,11 +7,24 @@ import mammoth from "mammoth";
 import { EXTRACTION_INVALID_MESSAGE, isValidExtractedText, isValidSourceText } from "./utils/sourceValidation";
 
 export const app = express();
+
+// Vercel/Express entrypoint: Vercel detects the default export from server.ts.
+// Keep the same Express instance for local Node and Vercel deployments.
 const PORT = 3000;
 
 // Enable JSON and URL-encoded bodies with higher limits to support large documents and digitized materials
 app.use(express.json({ limit: "6mb" }));
 app.use(express.urlencoded({ limit: "6mb", extended: true }));
+
+// Lightweight deployment/API diagnostic. This route never calls Gemini.
+app.get("/api/health", (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    service: "ra-de-thi-api",
+    build: "2026-10-source-validation-v7",
+    runtime: process.env.VERCEL ? "vercel" : "node",
+  });
+});
 
 // Helper to initialize Gemini client
 function getGeminiClient() {
@@ -1962,9 +1975,11 @@ app.use((err: any, req: any, res: any, next: any) => {
   next();
 });
 
+// Vercel zero-config Express detection requires a default export from server.ts.
+export default app;
+
 // Serve the frontend only for the traditional local Node server.
-// On Vercel, the Express app is exported through api/[...path].ts and the
-// Vite build is served as static output by the platform.
+// On Vercel, the default-exported Express app is handled by Vercel's Node/Express runtime; the Vite build is served as static output by the platform.
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
