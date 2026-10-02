@@ -18,7 +18,7 @@ import {
   DEFAULT_MATRIX_TEMPLATE 
 } from '../constants';
 import { getSubjectTemplate } from '../utils/subjectTemplates';
-import { EXTRACTION_INVALID_MESSAGE, isValidExtractedText, isValidSourceText } from '../utils/sourceValidation';
+import { EXTRACTION_INVALID_MESSAGE, isValidExtractedText, isValidSourceText, sanitizeSourceText } from '../utils/sourceValidation';
 
 export const EXAM_DURATION_OPTIONS = [15, 45, 60, 90, 120, 180];
 
@@ -348,6 +348,17 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
     setTimeout(() => setSaveStatus(null), 4000);
   };
 
+  // Self-heal legacy/localStorage values that contain an extraction fallback.
+  // This also protects the UI when an older deployment hands invalid source text
+  // into this page during a hot update or restore operation.
+  useEffect(() => {
+    if (lesson && !isValidSourceText(lesson)) setLesson('');
+  }, [lesson, setLesson]);
+
+  useEffect(() => {
+    if (regulationSource && !isValidSourceText(regulationSource)) setRegulationSource('');
+  }, [regulationSource, setRegulationSource]);
+
   const compressImage = (file: File): Promise<{ base64: string, mimeType: string }> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -660,7 +671,7 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
 
           <textarea
             value={lesson}
-            onChange={(e) => setLesson(e.target.value)}
+            onChange={(e) => setLesson(sanitizeSourceText(e.target.value))}
             placeholder="Nội dung sách giáo khoa hoặc giáo án sẽ xuất hiện ở đây sau khi tải tệp lên, hoặc bạn có thể tự dán thủ công..."
             className="w-full h-48 p-4 border border-slate-200 rounded-2xl bg-slate-50/30 text-sm focus:bg-white focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all resize-none font-sans"
           />
@@ -711,7 +722,7 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
 
           <textarea
             value={regulationSource}
-            onChange={(e) => setRegulationSource(e.target.value)}
+            onChange={(e) => setRegulationSource(sanitizeSourceText(e.target.value))}
             placeholder="Nội dung văn bản quy định hoặc quy chuẩn ra đề thi của cơ sở đào tạo do Thầy/Cô cung cấp (Bắt buộc)..."
             className={`w-full h-48 p-4 border rounded-2xl text-sm outline-none transition-all resize-none font-sans ${
               !isValidSourceText(regulationSource)

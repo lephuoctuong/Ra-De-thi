@@ -27,7 +27,7 @@ import StudentSubmissionsAnalytics from './pages/StudentSubmissionsAnalytics';
 import BackupRestore from './pages/BackupRestore';
 import StudentExamPortal from './pages/StudentExamPortal';
 import { getExamById } from './utils/examStorage';
-import { isValidSourceText } from './utils/sourceValidation';
+import { isValidSourceText, sanitizeSourceText } from './utils/sourceValidation';
 
 // Importing Constants
 import {
@@ -45,6 +45,20 @@ const App: React.FC = () => {
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [selectedExamForSubmissions, setSelectedExamForSubmissions] = useState<string | undefined>();
 
+  // Source schema marker lets a newly deployed build self-heal old browser state.
+  // It never deletes valid teacher data; only invalid extraction/fallback values are cleared.
+  const SOURCE_SCHEMA_VERSION = '2026-10-source-validation-v2';
+  useEffect(() => {
+    const version = localStorage.getItem('qbank_source_schema_version');
+    if (version !== SOURCE_SCHEMA_VERSION) {
+      const lessonStored = localStorage.getItem('qbank_lesson');
+      const regulationStored = localStorage.getItem('qbank_regulation_source');
+      if (lessonStored !== null && !isValidSourceText(lessonStored)) localStorage.removeItem('qbank_lesson');
+      if (regulationStored !== null && !isValidSourceText(regulationStored)) localStorage.removeItem('qbank_regulation_source');
+      localStorage.setItem('qbank_source_schema_version', SOURCE_SCHEMA_VERSION);
+    }
+  }, []);
+
   // Read state with fallbacks on bootup
   const [lesson, setLesson] = useState(() => {
     const stored = localStorage.getItem('qbank_lesson');
@@ -57,11 +71,16 @@ const App: React.FC = () => {
       localStorage.removeItem('qbank_lesson');
       return '';
     }
+    const sanitized = sanitizeSourceText(stored);
+    if (!sanitized) {
+      localStorage.removeItem('qbank_lesson');
+      return '';
+    }
     if (stored.includes('TOÁN LỚP 10') || stored.includes('PHƯƠNG TRÌNH BẬC HAI')) {
       localStorage.setItem('qbank_lesson', DEFAULT_LESSON);
       return DEFAULT_LESSON;
     }
-    return stored;
+    return sanitized;
   });
 
   // Văn bản quy định là nguồn bắt buộc do người dùng cung cấp - tuyệt đối không có nguồn mặc định.
@@ -69,11 +88,12 @@ const App: React.FC = () => {
   const [regulationSource, setRegulationSource] = useState<string>(() => {
     const stored = localStorage.getItem('qbank_regulation_source');
     if (stored === null) return '';
-    if (!isValidSourceText(stored)) {
+    const sanitized = sanitizeSourceText(stored);
+    if (!sanitized) {
       localStorage.removeItem('qbank_regulation_source');
       return '';
     }
-    return stored;
+    return sanitized;
   });
 
   const [sampleExam, setSampleExam] = useState(() => {
@@ -362,8 +382,8 @@ const App: React.FC = () => {
 
   // Nạp lại gói đề thi từ Kho đề thi vào các bước biên soạn
   const handleLoadExamIntoWorkflow = (pkg: SavedExamPackage) => {
-    if (pkg.lesson) setLesson(pkg.lesson);
-    if (pkg.regulationSource) setRegulationSource(pkg.regulationSource);
+    if (pkg.lesson && isValidSourceText(pkg.lesson)) setLesson(sanitizeSourceText(pkg.lesson));
+    if (pkg.regulationSource && isValidSourceText(pkg.regulationSource)) setRegulationSource(sanitizeSourceText(pkg.regulationSource));
     if (pkg.sampleExam) setSampleExam(pkg.sampleExam);
     if (pkg.matrix) setMatrix(pkg.matrix);
     if (pkg.subject) setSubject(pkg.subject);
@@ -387,7 +407,7 @@ const App: React.FC = () => {
   };
 
   const handleNavigate = (targetView: ViewState) => {
-    if (['M1', 'M2', 'M3', 'M4', 'M5'].includes(targetView) && !regulationSource.trim()) {
+    if (['M1', 'M2', 'M3', 'M4', 'M5'].includes(targetView) && !isValidSourceText(regulationSource)) {
       alert("Mục '2. Văn bản quy định' là nguồn bắt buộc do người dùng cung cấp.\n\nThầy/Cô vui lòng cung cấp văn bản quy định tại Bước 0 trước khi chuyển sang Bước 1!");
       setCurrentView('M0');
       return;
@@ -397,7 +417,7 @@ const App: React.FC = () => {
 
   const renderContent = () => {
     // Chặn tuyệt đối không cho chuyển sang các bước xử lý nếu chưa cung cấp văn bản quy định
-    if (['M1', 'M2', 'M3', 'M4', 'M5'].includes(currentView) && !regulationSource.trim()) {
+    if (['M1', 'M2', 'M3', 'M4', 'M5'].includes(currentView) && !isValidSourceText(regulationSource)) {
       return (
         <div className="p-8 max-w-4xl mx-auto my-12 bg-white rounded-3xl border border-rose-200 shadow-xl text-center space-y-4">
           <div className="w-16 h-16 mx-auto rounded-2xl bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600 font-extrabold text-2xl">
@@ -598,7 +618,7 @@ const App: React.FC = () => {
   };
 
   const steps = [
-    { id: 'M0', title: 'Bước 0', subtitle: 'Nạp tệp nguồn', icon: Home, isCompleted: !!(regulationSource.trim() && (lesson.trim() || sampleExam.trim())) },
+    { id: 'M0', title: 'Bước 0', subtitle: 'Nạp tệp nguồn', icon: Home, isCompleted: !!(isValidSourceText(regulationSource) && (isValidSourceText(lesson) || sampleExam.trim())) },
     { id: 'M1', title: 'Bước 1', subtitle: 'Phân tích tài liệu', icon: BookOpen, isCompleted: !!resultStep1.trim() },
     { id: 'M2', title: 'Bước 2', subtitle: 'Ma trận & Đặc tả', icon: Layers, isCompleted: !!resultStep2.trim() },
     { id: 'M3', title: 'Bước 3', subtitle: 'Tạo đề kiểm tra gốc', icon: PlusCircle, isCompleted: !!resultStep3.trim() },

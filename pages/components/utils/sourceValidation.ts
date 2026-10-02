@@ -11,6 +11,10 @@ const EXTRACTION_FALLBACK_PATTERNS = [
   'có vẻ như bạn chưa cung cấp',
   'có vẻ như chưa có nội dung',
   'bạn chưa cung cấp hình ảnh',
+  'bạn chưa cung cấp hình ảnh hoặc văn bản chứa nội dung tài liệu',
+  'bạn chưa cung cấp hình ảnh hoặc nội dung văn bản cần trích xuất',
+  'bạn chưa cung cấp nội dung tài liệu',
+  'vui lòng gửi hình ảnh, tệp hoặc dán nội dung văn bản',
   'bạn chưa cung cấp nội dung',
   'bạn vui lòng tải lên hình ảnh',
   'bạn vui lòng tải lên tệp',
@@ -46,8 +50,25 @@ export const isValidSourceText = (text: string, minLength = 1): boolean => {
 
   // Only inspect the beginning: a real document may legitimately contain
   // phrases such as "vui lòng tải lên..." later in its body.
-  const head = normalizeForValidation(trimmed.slice(0, 1200));
-  return !EXTRACTION_FALLBACK_PATTERNS.some((pattern) => head.includes(pattern));
+  const head = normalizeForValidation(trimmed.slice(0, 1600));
+  if (EXTRACTION_FALLBACK_PATTERNS.some((pattern) => head.includes(pattern))) return false;
+
+  // Guard against the common fallback being wrapped/altered slightly by an AI
+  // response (e.g. punctuation or a short introductory sentence).
+  const fallbackSignals = [
+    /chưa\s+cung\s+cấp.*(?:hình\s+ảnh|nội\s+dung).*trích\s+xuất/i,
+    /vui\s+lòng.*(?:tải\s+lên|gửi).*(?:hình\s+ảnh|tệp|nội\s+dung).*trích\s+xuất/i,
+    /tôi\s+sẽ\s+giúp\s+bạn\s+trích\s+xuất/i,
+    /muốn\s+số\s+hóa\s+vào\s+đây/i,
+  ];
+  return !fallbackSignals.some((rx) => rx.test(head));
+};
+
+/** Returns a safe source value; invalid extraction/fallback text becomes empty. */
+export const sanitizeSourceText = (text: string, minLength = 1): string => {
+  if (typeof text !== 'string') return '';
+  const cleaned = text.replace(/^\uFEFF/, '').trim();
+  return isValidSourceText(cleaned, minLength) ? cleaned : '';
 };
 
 /** Stricter check for data returned by /api/extract-text. */

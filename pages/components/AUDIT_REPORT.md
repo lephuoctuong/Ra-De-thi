@@ -26,3 +26,17 @@
 ## Kiểm tra build
 
 Môi trường kiểm tra hiện tại không có dependency `node_modules` và không thể tải đầy đủ npm registry trong thời gian kiểm tra, vì vậy không ghi nhận giả rằng `npm run lint`/`npm run build:web` đã chạy thành công. Sau khi đưa lên GitHub/Vercel, hệ thống build sẽ cài dependency từ `package-lock.json`.
+
+
+## Additional fix after live UI verification (2026-10-02)
+
+The supplied screenshot showed the legacy extraction fallback text still rendered as source data while the regulation badge remained green. The source has therefore been hardened again:
+
+1. The exact fallback phrase shown in the screenshot is now explicitly rejected.
+2. `sanitizeSourceText()` is applied to restored source packages and manual source input.
+3. React self-healing guards clear invalid lesson/regulation state immediately.
+4. A versioned source-state migration clears only invalid legacy localStorage values.
+5. Bước 0 completion and navigation use the same validation function as the status badge.
+6. Vercel sends `no-store` for the HTML entry point to force a fresh application shell after deployment.
+
+If the old green badge is still visible after deploying this ZIP, the browser is not executing this source build; use a fresh Vercel deployment and hard-refresh the site.

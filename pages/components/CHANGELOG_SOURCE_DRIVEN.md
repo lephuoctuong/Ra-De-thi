@@ -37,3 +37,13 @@ Loại bỏ hoàn toàn sự phụ thuộc cứng vào văn bản quy định c�
 - Chuẩn hóa lời gọi AI server-side qua `@google/genai` với `gemini-3.8-flash` và fallback `3.7/3.6/3.5`.
 - Không inject `GEMINI_API_KEY` vào Vite frontend bundle.
 - Thêm Vercel serverless wrapper cho toàn bộ `/api/*`.
+
+
+## 2026-10-02 — Source validation hardening v2
+
+- Added strict detection of the exact legacy extraction fallback shown in Mục 1/Mục 2 screenshots.
+- Added `sanitizeSourceText()` so fallback/error prose can never be stored as lesson or regulation data, including manual paste and restored exam packages.
+- Added self-healing React guards for legacy invalid state.
+- Added a source-schema migration marker so the first launch of the new build cleans only invalid legacy source values.
+- Navigation and Bước 0 completion now use source validation rather than a non-empty-string check.
+- Added Vercel `no-store` headers for the HTML entry point to reduce stale-browser/deployment-cache problems.

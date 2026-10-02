@@ -188,3 +188,12 @@ ZIP này được tối ưu để **không phụ thuộc cứng vào một văn 
 
 **Lưu ý về dữ liệu server:** Vercel Functions không phải hệ thống lưu trữ dữ liệu bền vững. Các file JSON `student-exams-vault.json` và `student-submissions.json` vẫn được giữ nguyên trong source ZIP và được dùng tốt khi chạy Node server truyền thống, nhưng khi triển khai serverless trên Vercel, dữ liệu ghi mới vào filesystem không nên được xem là kho dữ liệu lâu dài. Nếu cần lưu trữ bền vững trên Vercel, nên bổ sung database/object storage ở một phiên bản riêng mà không thay đổi quy trình nghiệp vụ hiện tại.
 
+
+
+## Deployment note — source validation v2
+
+This build contains a self-healing migration for legacy `localStorage` values that were incorrectly storing the extraction fallback text in Mục 1/Mục 2. It also marks the HTML entry point as `no-store` on Vercel to reduce stale-shell issues.
+
+After importing a new commit into Vercel, open the deployment URL and perform one hard refresh. The build marker is available as the HTML meta tag `app-build=2026-10-02-source-validation-v2`.
+
+If Mục 2 still shows a green “Đã có văn bản quy định” badge while its textarea contains the fallback sentence beginning “Bạn chưa cung cấp hình ảnh...”, the browser is executing an older deployment and not this build.
