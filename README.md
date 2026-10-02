@@ -176,7 +176,7 @@ ZIP này được tối ưu để **không phụ thuộc cứng vào một văn 
 
 ## 9. Cấu hình Gemini và triển khai Vercel
 
-- Ứng dụng sử dụng **Google GenAI SDK `@google/genai` 2.24.x** ở phía server.
+- Backend gọi **Gemini API qua REST server-side**; API key chỉ nằm trong `process.env.GEMINI_API_KEY`. Gói `@google/genai` cũ được giữ trong manifest để tránh thay đổi dependency không cần thiết, nhưng không còn được import/runtime sử dụng.
 - Model mặc định: **`gemini-3.8-flash`**.
 - Fallback khi lỗi tạm thời/quota: `gemini-3.7-flash` → `gemini-3.6-flash` → `gemini-3.5-flash`.
 - Không còn cấu hình/model model Gemini thế hệ cũ trong mã nguồn.
@@ -243,3 +243,12 @@ After deployment, verify:
 - `/api/health` → `build` is `2026-10-source-validation-v8`
 - `/api/health` → `geminiConfigured` is `true`
 - Then test a small PDF/image in Step 0.
+
+
+## Deployment note — V9 deterministic Vercel routing
+
+V9 uses one explicit Vercel API function at `api/[...path].ts`, which imports the Express app from `backend.ts`. The previous competing root `server.ts` entrypoint and stale `package-lock.json` were removed.
+
+Deploy with Build Command `npm run build:web`, Output Directory `dist`, Node.js `24.x`, and server-side environment variable `GEMINI_API_KEY`.
+
+Verify `https://YOUR-DOMAIN/api/health` before testing Gemini. A successful V9 deployment returns `build: 2026-10-source-validation-v9`.

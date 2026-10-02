@@ -28,3 +28,7 @@ Mở `/api/health`. Kết quả phải là JSON có:
 - `geminiConfigured: true`
 
 Nếu `geminiConfigured` là `false`, đây là cấu hình Vercel chứ không phải lỗi mã nguồn: thêm `GEMINI_API_KEY` trong Project Settings → Environment Variables và Redeploy.
+
+## Security detail
+
+The Gemini REST request now sends the key in the `x-goog-api-key` request header rather than putting the key in the URL query string. The key is never returned by `/api/health` or any browser response.
