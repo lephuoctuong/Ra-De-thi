@@ -158,10 +158,15 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
     matrix: useRef<HTMLInputElement>(null),
   };
 
-  const lessonIsValid = useMemo(() => isValidSourceText(lesson), [lesson]);
-  const regulationIsValid = useMemo(() => isValidSourceText(regulationSource), [regulationSource]);
-  const detectedGrade = useMemo(() => detectGradeFromText(lesson), [lesson]);
-  const detectedSubject = useMemo(() => detectSubjectFromText(lesson), [lesson]);
+  // HARD UI GUARD: the value rendered in these source fields must always be the
+  // same sanitized value used by the status badge. This prevents an old/stale
+  // fallback message from ever being displayed as if it were real source data.
+  const safeLesson = useMemo(() => sanitizeSourceText(lesson), [lesson]);
+  const safeRegulationSource = useMemo(() => sanitizeSourceText(regulationSource), [regulationSource]);
+  const lessonIsValid = useMemo(() => isValidSourceText(safeLesson), [safeLesson]);
+  const regulationIsValid = useMemo(() => isValidSourceText(safeRegulationSource), [safeRegulationSource]);
+  const detectedGrade = useMemo(() => detectGradeFromText(safeLesson), [safeLesson]);
+  const detectedSubject = useMemo(() => detectSubjectFromText(safeLesson), [safeLesson]);
 
   // Priority 1: Prop subject from App.tsx state. Priority 2: Parsed from sampleExam. Priority 3: Detected from lesson.
   const activeSubject = useMemo(() => {
@@ -354,11 +359,11 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
   // This also protects the UI when an older deployment hands invalid source text
   // into this page during a hot update or restore operation.
   useEffect(() => {
-    if (lesson && !isValidSourceText(lesson)) setLesson('');
+    if (lesson && !isValidSourceText(lesson)) { setLesson(''); localStorage.removeItem('qbank_lesson'); }
   }, [lesson, setLesson]);
 
   useEffect(() => {
-    if (regulationSource && !isValidSourceText(regulationSource)) setRegulationSource('');
+    if (regulationSource && !isValidSourceText(regulationSource)) { setRegulationSource(''); localStorage.removeItem('qbank_regulation_source'); }
   }, [regulationSource, setRegulationSource]);
 
   const compressImage = (file: File): Promise<{ base64: string, mimeType: string }> => {
@@ -672,7 +677,7 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
           {renderFileDropZone('lesson')}
 
           <textarea
-            value={lesson}
+            value={safeLesson}
             onChange={(e) => setLesson(sanitizeSourceText(e.target.value))}
             placeholder="Nội dung sách giáo khoa hoặc giáo án sẽ xuất hiện ở đây sau khi tải tệp lên, hoặc bạn có thể tự dán thủ công..."
             className="w-full h-48 p-4 border border-slate-200 rounded-2xl bg-slate-50/30 text-sm focus:bg-white focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all resize-none font-sans"
@@ -723,7 +728,7 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
           {renderFileDropZone('regulationSource')}
 
           <textarea
-            value={regulationSource}
+            value={safeRegulationSource}
             onChange={(e) => setRegulationSource(sanitizeSourceText(e.target.value))}
             placeholder="Nội dung văn bản quy định hoặc quy chuẩn ra đề thi của cơ sở đào tạo do Thầy/Cô cung cấp (Bắt buộc)..."
             className={`w-full h-48 p-4 border rounded-2xl text-sm outline-none transition-all resize-none font-sans ${
@@ -736,7 +741,7 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
             <span className={!regulationIsValid ? 'text-rose-600 font-bold' : 'text-slate-400'}>
               {!regulationIsValid ? 'Chưa có văn bản quy định hợp lệ — bắt buộc phải có' : 'Nguồn chính thức dùng xuyên suốt Bước 1, 2, 3'}
             </span>
-            <span className={!regulationIsValid ? 'text-rose-500' : 'text-slate-400'}>{regulationSource.length.toLocaleString()} ký tự</span>
+            <span className={!regulationIsValid ? 'text-rose-500' : 'text-slate-400'}>{safeRegulationSource.length.toLocaleString()} ký tự</span>
           </div>
         </div>
 

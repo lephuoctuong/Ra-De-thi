@@ -96,6 +96,16 @@ const App: React.FC = () => {
     return sanitized;
   });
 
+  // Absolute invariant: regulationSource is either valid user source or empty.
+  // This is intentionally redundant with SourceSetup so imported/session data cannot
+  // reintroduce the old extraction fallback into the workflow.
+  useEffect(() => {
+    if (regulationSource && !isValidSourceText(regulationSource)) {
+      setRegulationSource('');
+      localStorage.removeItem('qbank_regulation_source');
+    }
+  }, [regulationSource]);
+
   const [sampleExam, setSampleExam] = useState(() => {
     const stored = localStorage.getItem('qbank_sample_exam');
     if (!stored) return DEFAULT_SAMPLE_EXAM;

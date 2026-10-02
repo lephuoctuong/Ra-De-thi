@@ -71,3 +71,11 @@ Smoke test results:
 - Screenshot Mục 2 fallback => INVALID
 - Representative real regulation text => VALID
 - Representative real lesson text => VALID
+
+
+## V4 hard UI invariant
+- `SourceSetup` renders only `sanitizeSourceText(...)` values for Mục 1 and Mục 2.
+- Status badges are computed from those exact sanitized values.
+- Invalid persisted/imported regulation text is immediately cleared from state and localStorage.
+- App-level invariant prevents invalid `regulationSource` from propagating to downstream steps.
+- Build marker: `2026-10-source-validation-v4`.
