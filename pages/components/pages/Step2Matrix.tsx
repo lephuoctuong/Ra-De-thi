@@ -27,6 +27,7 @@ import {
   Clock
 } from 'lucide-react';
 import ContentRenderer from '../components/ContentRenderer';
+import { isValidSourceText } from '../utils/sourceValidation';
 
 interface Step2MatrixProps {
   lesson: string;
@@ -719,7 +720,7 @@ const Step2Matrix: React.FC<Step2MatrixProps> = ({
 
   // Gọi API sinh Ma trận & Đặc tả với Gemini
   const handleRunGemini = async () => {
-    if (!regulationSource || !regulationSource.trim()) {
+    if (!isValidSourceText(regulationSource)) {
       alert("CẢNH BÁO: Mục '2. Văn bản quy định' là nguồn bắt buộc do người dùng cung cấp. Vui lòng quay lại Bước 0 để cung cấp văn bản quy định trước khi tạo Ma trận & Bản đặc tả!");
       onPrev();
       return;

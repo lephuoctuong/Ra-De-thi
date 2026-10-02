@@ -47,7 +47,7 @@ const App: React.FC = () => {
 
   // Source schema marker lets a newly deployed build self-heal old browser state.
   // It never deletes valid teacher data; only invalid extraction/fallback values are cleared.
-  const SOURCE_SCHEMA_VERSION = '2026-10-source-validation-v2';
+  const SOURCE_SCHEMA_VERSION = '2026-10-source-validation-v3';
   useEffect(() => {
     const version = localStorage.getItem('qbank_source_schema_version');
     if (version !== SOURCE_SCHEMA_VERSION) {
@@ -183,7 +183,9 @@ const App: React.FC = () => {
   });
 
   // Persists states in localStorage
-  useEffect(() => { localStorage.setItem('qbank_lesson', lesson); }, [lesson]);
+  useEffect(() => {
+    localStorage.setItem('qbank_lesson', isValidSourceText(lesson) ? lesson : '');
+  }, [lesson]);
   
   // Khi người dùng thay văn bản quy định: phải vô hiệu hóa các kết quả được tạo từ văn bản quy định cũ, không trộn dữ liệu cũ
   const prevRegulationSourceRef = useRef<string>(regulationSource);
@@ -211,7 +213,7 @@ const App: React.FC = () => {
     }
 
     prevRegulationSourceRef.current = regulationSource;
-    localStorage.setItem('qbank_regulation_source', regulationSource);
+    localStorage.setItem('qbank_regulation_source', isValidSourceText(regulationSource) ? regulationSource : '');
   }, [regulationSource]);
 
   useEffect(() => { localStorage.setItem('qbank_sample_exam', sampleExam); }, [sampleExam]);

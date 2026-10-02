@@ -20,6 +20,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import ContentRenderer from '../components/ContentRenderer';
+import { isValidSourceText } from '../utils/sourceValidation';
 import { saveExamToVault, inferExamMetadata } from '../utils/examStorage';
 import { SavedExamPackage } from '../types';
 

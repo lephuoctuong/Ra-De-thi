@@ -47,3 +47,11 @@ Loại bỏ hoàn toàn sự phụ thuộc cứng vào văn bản quy định c�
 - Added a source-schema migration marker so the first launch of the new build cleans only invalid legacy source values.
 - Navigation and Bước 0 completion now use source validation rather than a non-empty-string check.
 - Added Vercel `no-store` headers for the HTML entry point to reduce stale-browser/deployment-cache problems.
+
+## 2026-10-02 — V3 source-validation hotfix
+
+- Fixed paraphrased extraction fallback detection that could be treated as a valid regulation source.
+- Added semantic detection for `chưa cung cấp` + extraction/upload language.
+- Prevented invalid source values from being written back to localStorage.
+- Unified Mục 2 status, navigation gating, client checks, and server checks on the same validator.
+- Added build marker `2026-10-source-validation-v3` to `index.html` for deployment verification.

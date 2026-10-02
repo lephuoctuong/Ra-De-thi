@@ -40,3 +40,34 @@ The supplied screenshot showed the legacy extraction fallback text still rendere
 6. Vercel sends `no-store` for the HTML entry point to force a fresh application shell after deployment.
 
 If the old green badge is still visible after deploying this ZIP, the browser is not executing this source build; use a fresh Vercel deployment and hard-refresh the site.
+
+## V3 — Source validation hotfix (2026-10-02)
+
+Root cause confirmed from the reported screenshot: the validation in V2 was too dependent on exact fallback phrases. A paraphrased fallback such as:
+
+`Bạn chưa cung cấp nội dung văn bản hoặc hình ảnh tài liệu cần trích xuất...`
+
+could pass an overly narrow string check in an older/browser deployment and appear as a valid regulation source.
+
+V3 fixes this at four layers:
+
+1. `utils/sourceValidation.ts`
+   - Adds semantic fallback detection using combined signals (`chưa cung cấp` + extraction/upload language).
+   - Normalizes Markdown markers and whitespace before validation.
+   - `sanitizeSourceText()` returns an empty string for fallback/error text.
+2. `App.tsx`
+   - Bumps source schema to `2026-10-source-validation-v3`.
+   - Invalid lesson/regulation values are removed at boot.
+   - Invalid values are never persisted back to localStorage.
+   - Dependent Step 1/2/3/5 results are cleared when the mandatory regulation source is invalid.
+3. `pages/SourceSetup.tsx`
+   - Mục 1 and Mục 2 status indicators use memoized validation values from the same validator.
+   - The Next button uses the same validity decision.
+4. `server.ts` and Step 1/2/3 clients
+   - Mandatory regulation-source checks use the same validator, so the API cannot accept the fallback text as a regulation source.
+
+Smoke test results:
+- Screenshot Mục 1 fallback => INVALID
+- Screenshot Mục 2 fallback => INVALID
+- Representative real regulation text => VALID
+- Representative real lesson text => VALID

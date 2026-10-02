@@ -197,3 +197,13 @@ This build contains a self-healing migration for legacy `localStorage` values th
 After importing a new commit into Vercel, open the deployment URL and perform one hard refresh. The build marker is available as the HTML meta tag `app-build=2026-10-02-source-validation-v2`.
 
 If Mục 2 still shows a green “Đã có văn bản quy định” badge while its textarea contains the fallback sentence beginning “Bạn chưa cung cấp hình ảnh...”, the browser is executing an older deployment and not this build.
+
+## Deployment verification for V3 source-validation fix
+
+This source package contains build marker `2026-10-source-validation-v3` in `index.html`.
+After deploying to Vercel, open the new deployment URL and perform a hard refresh (`Ctrl+Shift+R`).
+The Mục 2 status must be red/"Chưa cung cấp văn bản quy định" when the textarea contains any extraction fallback such as:
+
+`Bạn chưa cung cấp nội dung văn bản hoặc hình ảnh tài liệu cần trích xuất...`
+
+The green `✓ Đã có văn bản quy định` state is reserved for actual user-provided regulation content.

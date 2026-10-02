@@ -158,6 +158,8 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
     matrix: useRef<HTMLInputElement>(null),
   };
 
+  const lessonIsValid = useMemo(() => isValidSourceText(lesson), [lesson]);
+  const regulationIsValid = useMemo(() => isValidSourceText(regulationSource), [regulationSource]);
   const detectedGrade = useMemo(() => detectGradeFromText(lesson), [lesson]);
   const detectedSubject = useMemo(() => detectSubjectFromText(lesson), [lesson]);
 
@@ -683,12 +685,12 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
 
         {/* Unit 2: văn bản quy định / 7791 */}
         <div className={`bg-white p-6 rounded-3xl border shadow-sm hover:shadow-md transition-all flex flex-col space-y-4 ${
-          !isValidSourceText(regulationSource) ? 'border-rose-300 ring-2 ring-rose-100' : 'border-slate-200'
+          !regulationIsValid ? 'border-rose-300 ring-2 ring-rose-100' : 'border-slate-200'
         }`}>
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-3">
               <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                !isValidSourceText(regulationSource) ? 'bg-rose-50 text-rose-600' : 'bg-blue-50 text-blue-600'
+                !regulationIsValid ? 'bg-rose-50 text-rose-600' : 'bg-blue-50 text-blue-600'
               }`}>
                 <FileText size={20} />
               </div>
@@ -701,7 +703,7 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
             </div>
 
             {/* Status indicator */}
-            {!isValidSourceText(regulationSource) ? (
+            {!regulationIsValid ? (
               <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold rounded-xl animate-pulse">
                 Chưa cung cấp văn bản quy định
               </span>
@@ -712,7 +714,7 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
             )}
           </div>
 
-          {!isValidSourceText(regulationSource) && (
+          {!regulationIsValid && (
             <div className="p-3 bg-rose-50/90 border border-rose-200 rounded-2xl text-xs text-rose-800 leading-relaxed font-medium">
               ⚠️ <strong>Yêu cầu bắt buộc:</strong> Thầy/Cô vui lòng tải lên tệp văn bản quy định (Ảnh, PDF, Word) hoặc dán trực tiếp nội dung văn bản quy định vào ô dưới. Hệ thống không sử dụng văn bản quy định mặc định và bắt buộc phải có văn bản quy định mới được chuyển sang Bước 1.
             </div>
@@ -725,16 +727,16 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
             onChange={(e) => setRegulationSource(sanitizeSourceText(e.target.value))}
             placeholder="Nội dung văn bản quy định hoặc quy chuẩn ra đề thi của cơ sở đào tạo do Thầy/Cô cung cấp (Bắt buộc)..."
             className={`w-full h-48 p-4 border rounded-2xl text-sm outline-none transition-all resize-none font-sans ${
-              !isValidSourceText(regulationSource)
+              !regulationIsValid
                 ? 'border-rose-200 bg-rose-50/20 focus:bg-white focus:border-rose-500'
                 : 'border-slate-200 bg-slate-50/30 focus:bg-white focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500'
             }`}
           />
           <div className="flex justify-between items-center text-xs font-semibold">
-            <span className={!isValidSourceText(regulationSource) ? 'text-rose-600 font-bold' : 'text-slate-400'}>
-              {!isValidSourceText(regulationSource) ? 'Chưa có văn bản quy định hợp lệ — bắt buộc phải có' : 'Nguồn chính thức dùng xuyên suốt Bước 1, 2, 3'}
+            <span className={!regulationIsValid ? 'text-rose-600 font-bold' : 'text-slate-400'}>
+              {!regulationIsValid ? 'Chưa có văn bản quy định hợp lệ — bắt buộc phải có' : 'Nguồn chính thức dùng xuyên suốt Bước 1, 2, 3'}
             </span>
-            <span className={!isValidSourceText(regulationSource) ? 'text-rose-500' : 'text-slate-400'}>{regulationSource.length.toLocaleString()} ký tự</span>
+            <span className={!regulationIsValid ? 'text-rose-500' : 'text-slate-400'}>{regulationSource.length.toLocaleString()} ký tự</span>
           </div>
         </div>
 
@@ -939,7 +941,7 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
 
       {/* Next Step Control */}
       <div className="flex flex-col items-end gap-2 pt-4">
-        {!isValidSourceText(regulationSource) && (
+        {!regulationIsValid && (
           <p className="text-xs text-rose-600 font-bold flex items-center gap-1.5 bg-rose-50 border border-rose-200 px-3.5 py-2 rounded-xl">
             <span>⚠️</span>
             <span>Mục "2. Văn bản quy định (văn bản quy định)" là nguồn bắt buộc do người dùng cung cấp. Vui lòng cung cấp văn bản quy định trước khi chuyển sang Bước 1!</span>
@@ -947,9 +949,9 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
         )}
         <button
           onClick={onNext}
-          disabled={!isValidSourceText(regulationSource) || (!isValidSourceText(lesson) && !isValidSourceText(sampleExam))}
+          disabled={!regulationIsValid || (!lessonIsValid && !isValidSourceText(sampleExam))}
           className={`px-8 py-4 rounded-2xl font-extrabold flex items-center gap-2 transition-all text-base shadow-lg ${
-            (!isValidSourceText(regulationSource) || (!isValidSourceText(lesson) && !isValidSourceText(sampleExam)))
+            (!regulationIsValid || (!lessonIsValid && !isValidSourceText(sampleExam)))
             ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
             : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:shadow-indigo-100 hover:translate-y-[-1px]'
           }`}

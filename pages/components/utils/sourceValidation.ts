@@ -1,30 +1,23 @@
 /**
  * Validation helpers for user-provided source documents.
  *
- * The application must never treat an extraction error/fallback message as
- * an actual lesson or regulation source. This module is intentionally free of
- * browser/Node-specific APIs so it can be shared by the React client and the
- * server extraction endpoint.
+ * IMPORTANT: extraction fallback/error messages must never become business data.
+ * This validator is shared by the browser and the server.
  */
 
 const EXTRACTION_FALLBACK_PATTERNS = [
   'có vẻ như bạn chưa cung cấp',
   'có vẻ như chưa có nội dung',
   'bạn chưa cung cấp hình ảnh',
-  'bạn chưa cung cấp hình ảnh hoặc văn bản chứa nội dung tài liệu',
-  'bạn chưa cung cấp hình ảnh hoặc nội dung văn bản cần trích xuất',
-  'bạn chưa cung cấp nội dung tài liệu',
-  'vui lòng gửi hình ảnh, tệp hoặc dán nội dung văn bản',
   'bạn chưa cung cấp nội dung',
-  'bạn vui lòng tải lên hình ảnh',
-  'bạn vui lòng tải lên tệp',
+  'chưa cung cấp hình ảnh',
+  'chưa cung cấp nội dung',
   'vui lòng tải lên hình ảnh',
   'vui lòng tải lên tệp',
   'vui lòng tải lên tài liệu',
-  'chưa cung cấp hình ảnh',
-  'chưa cung cấp nội dung văn bản',
-  'chưa cung cấp nội dung cần trích xuất',
-  'nội dung cần trích xuất',
+  'vui lòng gửi hình ảnh',
+  'vui lòng gửi tệp',
+  'vui lòng gửi tài liệu',
   'không có nội dung để trích xuất',
   'không thể trích xuất nội dung',
   'không thể đọc nội dung tài liệu',
@@ -37,31 +30,50 @@ const EXTRACTION_FALLBACK_PATTERNS = [
 const normalizeForValidation = (text: string) =>
   text
     .replace(/^\uFEFF/, '')
+    .replace(/\*+/g, '')
+    .replace(/[_`]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
 
-/** Returns true when text is non-empty and does not look like an extraction fallback/error. */
+/**
+ * Detects the generic fallback returned by the old extraction/chat flow.
+ * We deliberately combine signals instead of relying on one exact sentence,
+ * because Gemini may paraphrase the same message.
+ */
+export const isExtractionFallback = (text: string): boolean => {
+  if (typeof text !== 'string') return true;
+
+  const head = normalizeForValidation(text.slice(0, 2500));
+  if (!head) return false;
+
+  // Exact/common variants.
+  if (EXTRACTION_FALLBACK_PATTERNS.some((pattern) => head.includes(pattern))) return true;
+
+  // Paraphrased variants such as:
+  // "Bạn chưa cung cấp nội dung văn bản hoặc hình ảnh tài liệu cần trích xuất."
+  const missingSource = /chưa\s+cung\s+cấp|chưa\s+có\s+nội\s+dung|không\s+có\s+nội\s+dung/;
+  const extractionAction = /trích\s+xuất|số\s+hóa|xử\s+lý\s+tài\s+liệu/;
+  const uploadAction = /tải\s+lên|gửi\s+(?:hình\s+ảnh|tệp|tài\s+liệu)|dán\s+(?:nội\s+dung|văn\s+bản)/;
+
+  if (missingSource.test(head) && (extractionAction.test(head) || uploadAction.test(head))) return true;
+
+  // Typical assistant-style fallback: "Tôi sẽ giúp bạn..." after asking for a file.
+  if (/tôi\s+sẽ\s+giúp\s+bạn/.test(head) && (uploadAction.test(head) || extractionAction.test(head))) return true;
+
+  // Markdown/chat variants that explicitly ask the user to provide source data.
+  if (/bạn\s+(?:vui\s+lòng|hãy)\s+(?:tải\s+lên|gửi|dán)/.test(head) && extractionAction.test(head)) return true;
+
+  return false;
+};
+
+/** Returns true when text is real source content rather than an extraction fallback/error. */
 export const isValidSourceText = (text: string, minLength = 1): boolean => {
   if (typeof text !== 'string') return false;
 
   const trimmed = text.replace(/^\uFEFF/, '').trim();
   if (trimmed.length < minLength) return false;
-
-  // Only inspect the beginning: a real document may legitimately contain
-  // phrases such as "vui lòng tải lên..." later in its body.
-  const head = normalizeForValidation(trimmed.slice(0, 1600));
-  if (EXTRACTION_FALLBACK_PATTERNS.some((pattern) => head.includes(pattern))) return false;
-
-  // Guard against the common fallback being wrapped/altered slightly by an AI
-  // response (e.g. punctuation or a short introductory sentence).
-  const fallbackSignals = [
-    /chưa\s+cung\s+cấp.*(?:hình\s+ảnh|nội\s+dung).*trích\s+xuất/i,
-    /vui\s+lòng.*(?:tải\s+lên|gửi).*(?:hình\s+ảnh|tệp|nội\s+dung).*trích\s+xuất/i,
-    /tôi\s+sẽ\s+giúp\s+bạn\s+trích\s+xuất/i,
-    /muốn\s+số\s+hóa\s+vào\s+đây/i,
-  ];
-  return !fallbackSignals.some((rx) => rx.test(head));
+  return !isExtractionFallback(trimmed);
 };
 
 /** Returns a safe source value; invalid extraction/fallback text becomes empty. */

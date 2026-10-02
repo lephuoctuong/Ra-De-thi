@@ -4,7 +4,7 @@ import fs from "fs";
 import { GoogleGenAI, Type } from "@google/genai";
 
 import mammoth from "mammoth";
-import { EXTRACTION_INVALID_MESSAGE, isValidExtractedText } from "./utils/sourceValidation";
+import { EXTRACTION_INVALID_MESSAGE, isValidExtractedText, isValidSourceText } from "./utils/sourceValidation";
 
 export const app = express();
 const PORT = 3000;
@@ -490,7 +490,7 @@ app.post("/api/generate/step1", async (req, res) => {
   try {
     const { lesson, regulationSource, sampleExam, matrix, prompt, subject, grade } = req.body;
 
-    if (!regulationSource || typeof regulationSource !== "string" || regulationSource.trim().length === 0) {
+    if (!isValidSourceText(regulationSource)) {
       return res.status(400).json({
         error: "Mục '2. văn bản quy định (văn bản quy định)' là nguồn bắt buộc do người dùng cung cấp. Vui lòng cung cấp văn bản quy định tại Bước 0 trước khi tiến hành phân tích!"
       });
@@ -554,7 +554,7 @@ app.post("/api/generate/step2", async (req, res) => {
     const { lesson, regulationSource, sampleExam, matrix, step1Result, prompt, durationMinutes, examDuration, subject, grade } = req.body;
     const activeDuration = durationMinutes || examDuration || 45;
 
-    if (!regulationSource || typeof regulationSource !== "string" || regulationSource.trim().length === 0) {
+    if (!isValidSourceText(regulationSource)) {
       return res.status(400).json({
         error: "Mục '2. văn bản quy định (văn bản quy định)' là nguồn bắt buộc do người dùng cung cấp. Vui lòng cung cấp văn bản quy định tại Bước 0 trước khi xây dựng Ma trận & Bản đặc tả!"
       });
@@ -607,7 +607,7 @@ app.post("/api/generate/step3", async (req, res) => {
     const resolvedSubject = (subject && subject !== 'Chung' ? subject : 'Sinh học').toUpperCase();
     const resolvedGrade = grade ? `LỚP ${grade}` : 'LỚP 9';
 
-    if (!regulationSource || typeof regulationSource !== "string" || regulationSource.trim().length === 0) {
+    if (!isValidSourceText(regulationSource)) {
       return res.status(400).json({
         error: "Mục '2. văn bản quy định (văn bản quy định)' là nguồn bắt buộc do người dùng cung cấp. Vui lòng cung cấp văn bản quy định tại Bước 0 trước khi tạo Đề kiểm tra định kì!"
       });
@@ -683,7 +683,7 @@ app.post("/api/generate/step5", async (req, res) => {
     const resolvedSubject = (subject && subject !== 'Chung' ? subject : 'Sinh học').toUpperCase();
     const resolvedGrade = grade ? `LỚP ${grade}` : 'LỚP 9';
 
-    if (!regulationSource || typeof regulationSource !== "string" || regulationSource.trim().length === 0) {
+    if (!isValidSourceText(regulationSource)) {
       return res.status(400).json({
         error: "Mục '2. văn bản quy định (văn bản quy định)' là nguồn bắt buộc do người dùng cung cấp. Vui lòng cung cấp văn bản quy định tại Bước 0 trước khi tạo mã đề tương đương!"
       });
