@@ -1,12 +1,23 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { GoogleGenAI, Type } from "@google/genai";
+// Gemini is called through the official REST API from the server only.
+// This avoids bundler/runtime incompatibilities with the client SDK on Vercel.
+const Type = {
+  STRING: "STRING",
+  NUMBER: "NUMBER",
+  INTEGER: "INTEGER",
+  BOOLEAN: "BOOLEAN",
+  OBJECT: "OBJECT",
+  ARRAY: "ARRAY",
+} as const;
 
-import mammoth from "mammoth";
 import { EXTRACTION_INVALID_MESSAGE, isValidExtractedText, isValidSourceText } from "./utils/sourceValidation";
 
 export const app = express();
+
+const BUILD_ID = "2026-10-source-validation-v8";
+const PRIMARY_GEMINI_MODEL = "gemini-3.8-flash";
 
 // Vercel/Express entrypoint: Vercel detects the default export from server.ts.
 // Keep the same Express instance for local Node and Vercel deployments.
@@ -21,44 +32,120 @@ app.get("/api/health", (_req, res) => {
   res.status(200).json({
     ok: true,
     service: "ra-de-thi-api",
-    build: "2026-10-source-validation-v7",
+    build: BUILD_ID,
     runtime: process.env.VERCEL ? "vercel" : "node",
+    geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+    model: PRIMARY_GEMINI_MODEL,
+    apiRoutes: ["/api/extract-text", "/api/generate/step1", "/api/generate/step2", "/api/generate/step3", "/api/generate/step5"],
   });
 });
 
-// Helper to initialize Gemini client
+// Helper to initialize Gemini REST access. The key is never sent to the browser.
 function getGeminiClient() {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not configured in settings or environment.");
+    throw new Error("GEMINI_API_KEY_MISSING: Chưa cấu hình GEMINI_API_KEY trên Vercel Project Settings → Environment Variables.");
   }
-  return new GoogleGenAI({
-    apiKey: apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      }
-    }
-  });
+  return { apiKey };
 }
 
-// Resilient helper to execute model generation with exponential backoff and transparent multi-model list of candidates
-async function generateContentWithRetry(ai: any, params: {
+function normalizeGeminiContents(contents: any) {
+  if (typeof contents === "string") {
+    return [{ role: "user", parts: [{ text: contents }] }];
+  }
+
+  if (!Array.isArray(contents)) {
+    return [{ role: "user", parts: [{ text: String(contents ?? "") }] }];
+  }
+
+  // The previous SDK accepted a mixed array such as:
+  // [{ inlineData: {...} }, "instruction"]. Convert that form to the REST shape.
+  const parts = contents.flatMap((item: any) => {
+    if (typeof item === "string") return [{ text: item }];
+    if (item?.text) return [{ text: item.text }];
+    if (item?.inlineData) return [{ inline_data: item.inlineData }];
+    if (item?.inline_data) return [{ inline_data: item.inline_data }];
+    if (item?.fileData) return [{ file_data: item.fileData }];
+    if (item?.file_data) return [{ file_data: item.file_data }];
+    return [];
+  });
+
+  return [{ role: "user", parts }];
+}
+
+// Direct REST call to Gemini generateContent. This is intentionally server-side only.
+async function callGeminiRest(apiKey: string, model: string, params: { contents: any; config?: any }) {
+  const config = params.config || {};
+  const { systemInstruction, responseMimeType, responseSchema, ...generationConfig } = config;
+
+  const body: any = {
+    contents: normalizeGeminiContents(params.contents),
+  };
+
+  if (systemInstruction) {
+    body.systemInstruction = {
+      role: "system",
+      parts: [{ text: systemInstruction }],
+    };
+  }
+
+  if (responseMimeType || responseSchema || Object.keys(generationConfig).length > 0) {
+    body.generationConfig = { ...generationConfig };
+    if (responseMimeType) body.generationConfig.responseMimeType = responseMimeType;
+    if (responseSchema) body.generationConfig.responseSchema = responseSchema;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 55000);
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "ra-de-thi-vercel/8",
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    const raw = await response.text();
+    let data: any = null;
+    try { data = raw ? JSON.parse(raw) : null; } catch { /* handled below */ }
+
+    if (!response.ok) {
+      const providerMessage = data?.error?.message || raw || `${response.status} ${response.statusText}`;
+      const providerStatus = data?.error?.status ? ` [${data.error.status}]` : "";
+      throw new Error(`GEMINI_HTTP_${response.status}${providerStatus}: ${providerMessage}`);
+    }
+
+    const text = (data?.candidates || [])
+      .flatMap((candidate: any) => candidate?.content?.parts || [])
+      .map((part: any) => part?.text || "")
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+
+    if (!text) {
+      const finishReason = data?.candidates?.[0]?.finishReason || "UNKNOWN";
+      throw new Error(`GEMINI_EMPTY_RESPONSE: Gemini không trả về nội dung (finishReason=${finishReason}).`);
+    }
+
+    return { text, raw: data };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Resilient helper with a small, deterministic fallback chain.
+async function generateContentWithRetry(ai: { apiKey: string }, params: {
   model: string;
   contents: any;
   config?: any;
-}, maxRetriesPerModel = 2, initialDelay = 1000) {
-  // Construct dynamic fallback path with modern stable models
-  const candidateModels: string[] = [];
+}, maxRetriesPerModel = 1, initialDelay = 1000) {
   const requestedModel = params.model || "gemini-3.8-flash";
-  candidateModels.push(requestedModel);
-
-  const fallbackList = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"];
-  for (const m of fallbackList) {
-    if (!candidateModels.includes(m)) {
-      candidateModels.push(m);
-    }
-  }
+  const candidateModels = [requestedModel, "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
+    .filter((model, index, list) => list.indexOf(model) === index);
 
   let lastError: any = null;
 
@@ -66,72 +153,72 @@ async function generateContentWithRetry(ai: any, params: {
     let delay = initialDelay;
     console.log(`[AI-Routing] Attempting request using model: ${model}`);
 
-    for (let attempt = 1; attempt <= maxRetriesPerModel; attempt++) {
+    const attemptsForThisModel = model === requestedModel ? maxRetriesPerModel : 1;
+    for (let attempt = 1; attempt <= attemptsForThisModel; attempt++) {
       try {
-        const callParams = {
-          ...params,
-          model: model
-        };
-        return await ai.models.generateContent(callParams);
+        return await callGeminiRest(ai.apiKey, model, params);
       } catch (error: any) {
         lastError = error;
         const errorStr = String(error?.message || error).toLowerCase();
 
-        const isQuotaOrExhausted = errorStr.includes("429") || 
-                                   errorStr.includes("quota") || 
-                                   errorStr.includes("resource_exhausted") || 
-                                   errorStr.includes("rate limit") || 
-                                   errorStr.includes("exhausted");
+        const isQuotaOrExhausted = /\b429\b|quota|resource_exhausted|rate limit|exhausted/.test(errorStr);
+        const isRetryable = isQuotaOrExhausted || /\b503\b|service unavailable|high demand|\b500\b|\b502\b|\b504\b|timeout|aborted/.test(errorStr);
 
-        const isRetryable = isQuotaOrExhausted ||
-                            errorStr.includes("503") || 
-                            errorStr.includes("unavailable") || 
-                            errorStr.includes("high demand");
+        console.error(`[Gemini] model=${model} attempt=${attempt}:`, error?.message || error);
 
-        if (isRetryable) {
-          console.log(`[AI-Transient] Note on model ${model} (Attempt ${attempt}/${maxRetriesPerModel}): ${error?.message || error}`);
-        } else {
-          console.error(`Gemini API error on model ${model}:`, error?.message || error);
+        // A 401/403/404 is deterministic: trying four models will not fix a bad key
+        // or a blocked API. Move to another model only for quota/transient failures.
+        if (/gemini_http_401|gemini_http_403|gemini_http_400/.test(errorStr)) {
+          throw error;
         }
-
-        // If quota is exhausted on this specific model, break immediately to the next candidate model!
-        if (isQuotaOrExhausted) {
-          break;
+        if (/gemini_http_404/.test(errorStr) && !errorStr.includes("model")) {
+          throw error;
         }
 
         if (isRetryable && attempt < maxRetriesPerModel) {
           await new Promise((resolve) => setTimeout(resolve, delay));
           delay *= 1.5;
         } else {
-          if (!isRetryable) {
-            throw error;
-          }
           break;
         }
       }
     }
   }
 
-  throw lastError || new Error("Hệ thống AI đang quá tải tạm thời. Thầy cô vui lòng thử lại sau một lát.");
+  throw lastError || new Error("Hệ thống AI không trả về kết quả.");
 }
 
 // Ensure error handling
 const handleRouteError = (res: any, error: any) => {
   console.error("Route Error:", error);
-  let errorMsg = error?.message || "Đã xảy ra lỗi không xác định.";
-  
-  const errorStr = (typeof error === 'object' && error !== null) ? JSON.stringify(error) : String(error);
-  const combinedText = (errorMsg + " " + errorStr).toLowerCase();
+  const rawMessage = String(error?.message || error || "Đã xảy ra lỗi không xác định.");
+  const errorStr = rawMessage.toLowerCase();
+  let status = Number(error?.status || error?.statusCode || error?.response?.status || 500);
+  let errorMsg = rawMessage;
+  let code = error?.code || "INTERNAL_SERVER_ERROR";
 
-  if (combinedText.includes("503") || combinedText.includes("unavailable") || combinedText.includes("high demand")) {
-    errorMsg = "Máy chủ AI của Google đang bị quá tải tạm thời (Lỗi 503: High Demand / Service Unavailable). Thầy cô vui lòng đợi khoảng 5 - 10 giây rồi nhấn nút 'Chạy ngay với Gemini' một lần nữa để tiếp tục!";
-  } else if (combinedText.includes("429") || combinedText.includes("quota exceeded") || combinedText.includes("rate limit") || combinedText.includes("exhausted")) {
-    errorMsg = "Tài khoản hoặc hệ thống đã đạt giới hạn cuộc gọi miễn phí trong ngày (Lỗi 429: Rate Limit / Quota Exceeded). Để tiếp tục sử dụng không giới hạn và mượt mà nhất, Thầy/Cô có thể dễ dàng thiết lập mã khóa API Key chính chủ của mình trong phần 'Cài đặt' của ứng dụng đề thi để có hạn mức cao hơn nhiều!";
-  } else if (combinedText.includes("403") || combinedText.includes("api key") || combinedText.includes("invalid key") || combinedText.includes("forbidden")) {
-    errorMsg = "Khóa API Key của Gemini không hợp lệ hoặc không có quyền truy cập. Thầy cô vui lòng kiểm tra lại phần thiết lập API Key trong cài đặt ứng dụng.";
+  if (errorStr.includes("missing_gemini_api_key") || errorStr.includes("gemini_api_key chưa được cấu hình") || errorStr.includes("gemini_api_key is not configured")) {
+    status = 503; code = "MISSING_GEMINI_API_KEY";
+    errorMsg = "Máy chủ chưa được cấu hình GEMINI_API_KEY. Vào Vercel → Project Settings → Environment Variables, thêm GEMINI_API_KEY rồi Redeploy. API key chỉ nằm ở máy chủ và không được đưa vào frontend.";
+  } else if (errorStr.includes("503") || errorStr.includes("unavailable") || errorStr.includes("high demand")) {
+    status = 503; code = "GEMINI_UNAVAILABLE";
+    errorMsg = "Máy chủ AI của Google đang quá tải tạm thời (503). Hệ thống đã thử lại; vui lòng thử lại sau ít phút.";
+  } else if (errorStr.includes("429") || errorStr.includes("quota exceeded") || errorStr.includes("rate limit") || errorStr.includes("resource_exhausted") || errorStr.includes("exhausted")) {
+    status = 429; code = "GEMINI_QUOTA";
+    errorMsg = "Gemini đang báo giới hạn/quota (429). Hãy kiểm tra quota/billing của API key rồi thử lại.";
+  } else if (errorStr.includes("401") || errorStr.includes("403") || errorStr.includes("api key") || errorStr.includes("invalid key") || errorStr.includes("permission denied") || errorStr.includes("forbidden")) {
+    status = status >= 400 && status < 500 ? status : 401; code = "GEMINI_AUTH";
+    errorMsg = "GEMINI_API_KEY không hợp lệ hoặc không có quyền gọi Gemini API. Hãy kiểm tra lại API key và project/billing.";
+  } else if (errorStr.includes("400") || errorStr.includes("invalid_argument") || errorStr.includes("malformed")) {
+    status = 400; code = "GEMINI_BAD_REQUEST";
+    errorMsg = "Yêu cầu gửi tới Gemini không hợp lệ. Hãy kiểm tra loại tệp, MIME type và dung lượng tài liệu.";
+  } else if (errorStr.includes("timeout") || errorStr.includes("timed out") || errorStr.includes("deadline")) {
+    status = 504; code = "GEMINI_TIMEOUT";
+    errorMsg = "Gemini xử lý tài liệu quá lâu. Hãy thử tài liệu nhỏ hơn hoặc chia tài liệu thành từng phần.";
   }
-  
-  res.status(500).json({ error: errorMsg });
+
+  if (status < 400 || status > 599) status = 500;
+  return res.status(status).json({ error: errorMsg, code });
 };
 
 // API: Generate questions based on topics and specifications
@@ -149,7 +236,7 @@ app.post("/api/generate-questions", async (req, res) => {
     4. CẤU TRÚC: Phải trả về JSON mảng đối tượng.`;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.8-flash",
+      model: PRIMARY_GEMINI_MODEL,
       contents: `Soạn ${count} câu hỏi ${type === "TracNghiem" ? "Trắc nghiệm" : "Tự luận"} mức độ ${level || "NB"} về ${topic}.`,
       config: {
         systemInstruction,
@@ -206,7 +293,7 @@ app.post("/api/extract-questions-from-doc", async (req, res) => {
     3. Phân loại mức độ (NB, TH, VD, VDC) dựa trên nội dung.`;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.8-flash",
+      model: PRIMARY_GEMINI_MODEL,
       contents: [
         { inlineData: { data: base64Data, mimeType: mimeType || "application/pdf" } },
         { text: prompt }
@@ -266,7 +353,7 @@ app.post("/api/extract-matrix-from-image", async (req, res) => {
     3. Nếu giá trị nào không có, hãy để là 0.`;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.8-flash",
+      model: PRIMARY_GEMINI_MODEL,
       contents: [
         { inlineData: { data: base64Data, mimeType: mimeType || "image/png" } },
         { text: prompt }
@@ -309,7 +396,7 @@ app.post("/api/suggest-smart-matrix", async (req, res) => {
     const ai = getGeminiClient();
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.8-flash",
+      model: PRIMARY_GEMINI_MODEL,
       contents: `Gợi ý ma trận ${totalQuestions} câu cho môn ${subject}. Các chủ đề: ${topics ? topics.join(', ') : ""}. Kho hiện có: ${inventoryStr || ""}`,
       config: {
         responseMimeType: "application/json",
@@ -346,13 +433,17 @@ app.post("/api/suggest-smart-matrix", async (req, res) => {
 app.post("/api/extract-text", async (req, res) => {
   try {
     const { base64, mimeType, fileName } = req.body;
-    if (!base64) {
+    if (!base64 || typeof base64 !== "string") {
       return res.status(400).json({ error: "Không tìm thấy nội dung tệp ở dạng base64." });
+    }
+    if (base64.length > 5_500_000) {
+      return res.status(413).json({ error: "Tệp sau khi mã hóa Base64 quá lớn cho Vercel. Vui lòng chia nhỏ tài liệu hoặc giảm dung lượng tệp." });
     }
 
     // 1. If it's a Word document (.docx)
     if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || fileName?.endsWith(".docx")) {
       const buffer = Buffer.from(base64, "base64");
+      const { default: mammoth } = await import("mammoth");
       const result = await mammoth.extractRawText({ buffer });
       const text = result.value?.trim() || "";
       if (!isValidExtractedText(text)) {
@@ -390,16 +481,19 @@ app.post("/api/extract-text", async (req, res) => {
     }
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.8-flash",
+      model: PRIMARY_GEMINI_MODEL,
       contents: [
+        "Hãy trích xuất và số hóa toàn bộ nội dung văn bản cốt lõi trong tài liệu này một cách chính xác nhất và đầy đủ tất cả các dòng, chương mục. Với công thức toán, hãy giữ nguyên và chuyển sang định dạng LaTeX chuẩn (bọc trong \\( ... \\) hoặc \\[ ... \\] đối với toán dòng và toán khối). Chỉ trả về nội dung văn bản được số hóa, không thêm vào lời giải thích hay lời bàn của bạn.",
         {
           inlineData: {
             data: base64,
             mimeType: currentMimeType
           }
-        },
-        "Hãy trích xuất và số hóa toàn bộ nội dung văn bản cốt lõi trong tài liệu này một cách chính xác nhất và đầy đủ tất cả các dòng, chương mục. Với công thức toán, hãy giữ nguyên và chuyển sang định dạng LaTeX chuẩn (bọc trong \\( ... \\) hoặc \\[ ... \\] đối với toán dòng và toán khối). Chỉ trả về nội dung văn bản được số hóa, không thêm vào lời giải thích hay lời bàn của bạn."
+        }
       ],
+      config: {
+        thinkingConfig: { thinkingLevel: "low" }
+      }
     });
 
     const extractedText = response.text?.trim() || "";
@@ -442,7 +536,7 @@ app.post("/api/detect-figures", async (req, res) => {
 Bắt buộc trả về đúng định dạng JSON được chỉ định.`;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.8-flash",
+      model: PRIMARY_GEMINI_MODEL,
       contents: [
         {
           inlineData: {
@@ -549,7 +643,7 @@ LƯU Ý QUAN TRỌNG:
     `;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.8-flash",
+      model: PRIMARY_GEMINI_MODEL,
       contents: textPrompt,
       config: {
       },
@@ -600,7 +694,7 @@ ${prompt}
     `;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.8-flash",
+      model: PRIMARY_GEMINI_MODEL,
       contents: textPrompt,
       config: {
       },
@@ -672,7 +766,7 @@ Chú ý: Công thức toán và phương trình hóa học phải trình bày ch
     `;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.8-flash",
+      model: PRIMARY_GEMINI_MODEL,
       contents: textPrompt,
       config: {
       },
@@ -736,7 +830,7 @@ Chú ý: Công thức toán và phương trình hóa học phải dùng chuẩn 
     `;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.8-flash",
+      model: PRIMARY_GEMINI_MODEL,
       contents: textPrompt,
       config: {
       },
@@ -1763,7 +1857,7 @@ LƯU Ý QUAN TRỌNG:
 Hãy thực hiện đầy đủ 8 bước của Quy trình chấm tự động, kiểm tra 10 CHECKS chống chấm sai, đối chiếu 5 quan hệ đồng bộ, thực hiện 10 bước Kiểm Tra Cuối, xuất bảng kết quả từng câu có minh chứng truy vết và xuất JSON theo đúng cấu trúc.`;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.8-flash",
+      model: PRIMARY_GEMINI_MODEL,
       contents: userPrompt,
       config: {
         systemInstruction,

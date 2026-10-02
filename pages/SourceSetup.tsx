@@ -414,9 +414,7 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
 
   const processFile = async (file: File, fieldId: 'lesson' | 'regulationSource' | 'sampleExam' | 'matrix') => {
     // Vercel Functions impose a 4.5 MB request-body limit. Because the file is
-    // sent as base64 inside JSON, enforce the limit on the actual encoded payload.
-    // Images keep the existing client-side compression feature, so a large raw
-    // image may still be accepted when its compressed payload fits.
+    // sent as base64 inside JSON, enforce a conservative limit before upload.
     const MAX_NON_IMAGE_FILE_BYTES = 3 * 1024 * 1024;
     const MAX_RAW_IMAGE_BYTES = 15 * 1024 * 1024;
 
@@ -443,17 +441,15 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
       const fileName = file.name;
 
       if (file.type.startsWith('image/')) {
-        // Optimize and compress images before upload
         const compressed = await compressImage(file);
         base64 = compressed.base64;
         mimeType = compressed.mimeType;
       } else {
-        // Read file directly as raw base64
         base64 = await new Promise<string>((resolve, reject) => {
           const r = new FileReader();
           r.onload = () => {
-            const res = r.result as string;
-            resolve(res.split(",")[1]);
+            const result = r.result as string;
+            resolve(result.split(",")[1] || "");
           };
           r.onerror = () => reject(new Error("Lỗi khi đọc tệp."));
           r.readAsDataURL(file);
@@ -466,45 +462,67 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
         throw new Error("Dữ liệu tệp sau khi mã hóa quá lớn để gửi qua Vercel. Thầy/Cô vui lòng giảm dung lượng/chia nhỏ tệp hoặc dán trực tiếp nội dung văn bản.");
       }
 
+      // PDF/image extraction uses Gemini on the server. Check the deployment
+      // before uploading the document so a missing server key is reported
+      // clearly instead of becoming a generic HTTP 500 dialog. DOCX/TXT are
+      // extracted locally on the server and do not need Gemini.
+      const needsGemini = !(
+        mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        fileName.toLowerCase().endsWith('.docx') ||
+        mimeType === 'text/plain' ||
+        fileName.toLowerCase().endsWith('.txt')
+      );
+
+      if (needsGemini) {
+        const healthResponse = await fetch("/api/health", { cache: "no-store" });
+        if (!healthResponse.ok) {
+          throw new Error(`API máy chủ không sẵn sàng (HTTP ${healthResponse.status}). Hãy kiểm tra deployment Vercel rồi thử lại.`);
+        }
+        const health = await healthResponse.json().catch(() => null);
+        if (!health?.geminiConfigured) {
+          throw new Error("Vercel chưa có GEMINI_API_KEY ở phía máy chủ. Vào Project Settings → Environment Variables, thêm GEMINI_API_KEY rồi Redeploy.");
+        }
+      }
+
       const response = await fetch("/api/extract-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: requestBody,
+        cache: "no-store"
       });
 
       const responseText = await response.text();
-      let data;
+      let data: any = {};
       try {
         data = JSON.parse(responseText);
-      } catch (e) {
+      } catch {
         if (response.status === 413) {
           throw new Error("Dung lượng tài liệu quá lớn so với giới hạn xử lý. Thầy cô vui lòng chia nhỏ tài liệu hoặc dán trực tiếp nội dung văn bản vào ô nhập!");
         }
         if (response.status === 502 || response.status === 503 || response.status === 504) {
-          throw new Error(`Máy chủ AI đang bận hoặc quá tải tạm thời (Lỗi ${response.status}). Thầy cô vui lòng đợi khoảng 10 giây rồi thử lại.`);
+          throw new Error(`Máy chủ AI đang bận/quá tải hoặc hết thời gian xử lý (HTTP ${response.status}). Vui lòng thử lại sau 10–20 giây.`);
         }
-        throw new Error(`Lỗi phản hồi từ hệ thống (Lỗi ${response.status}). Hãy thử lại.`);
+        if (response.status === 500) {
+          throw new Error("API số hóa trên Vercel đã gặp lỗi 500. Hãy mở /api/health để kiểm tra build và GEMINI_API_KEY; nếu health báo OK, thử tài liệu nhỏ hơn.");
+        }
+        throw new Error(`Lỗi phản hồi từ hệ thống (HTTP ${response.status}). Hãy thử lại.`);
       }
 
       if (!response.ok || data.error) {
-        throw new Error(data.error || "Gặp lỗi khi số hóa tệp.");
+        const code = data.code ? ` [${data.code}]` : '';
+        throw new Error((data.error || "Gặp lỗi khi số hóa tệp.") + code);
       }
 
       const extractedText = typeof data.text === 'string' ? data.text.trim() : '';
-
-      // Never persist a Gemini/OCR fallback, empty response, or extraction error
-      // as if it were real lesson/regulation content.
       if (!isValidExtractedText(extractedText)) {
         throw new Error(data.error || EXTRACTION_INVALID_MESSAGE);
       }
-      
-      // Auto-detect subject and grade from digitized document and sync across workflow
+
       const autoSub = detectSubjectFromText(extractedText);
       const autoGr = detectGradeFromText(extractedText);
       if (autoSub && setSubject) setSubject(autoSub);
       if (autoGr && setGrade) setGrade(autoGr);
-      
-      // Get correct text state
+
       let currentVal = "";
       let setter: (v: string) => void;
       if (fieldId === 'lesson') { currentVal = lesson; setter = setLesson; }
@@ -519,8 +537,6 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
           setter((currentVal + "\n\n=== NỘI DUNG TỪ TỆP: " + fileName + " ===\n" + extractedText).trim());
         }
       } else {
-        // If the old value was an extraction fallback, replace it rather than
-        // appending the real document to an error message.
         setter(extractedText);
       }
       setUploadError(null);
@@ -530,7 +546,7 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
         triggerNotification(`Đã trích xuất & số hóa thành công tệp: ${fileName}! Thầy/Cô vui lòng cung cấp thêm Văn bản quy định (Mục 2) trước khi chuyển sang Bước 1.`);
       }
     } catch (err: any) {
-      console.error(err);
+      console.error("[SourceSetup] extract-text failed:", err);
       const message = err?.message || 'Đã xảy ra lỗi khi số hóa tệp.';
       setUploadError(message);
       alert(`Lỗi số hóa tệp: ${message}`);
@@ -538,7 +554,6 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
       setUploadingId(null);
     }
   };
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, fieldId: 'lesson' | 'regulationSource' | 'sampleExam' | 'matrix') => {
     const file = e.target.files?.[0];
     if (file) {

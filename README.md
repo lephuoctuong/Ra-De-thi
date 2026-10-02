@@ -43,6 +43,16 @@ Kho đề / Giao bài / Bài làm học sinh / Phân tích
 - npm.
 - API key Gemini được đặt trong biến môi trường `GEMINI_API_KEY`.
 
+
+### V8 — ổn định Gemini/Vercel
+
+- Backend gọi Gemini 3.8 Flash bằng **REST API server-side** thay vì import `@google/genai` tại runtime; điều này loại bỏ một điểm lỗi bundling/runtime thường gặp trên Vercel.
+- API key chỉ đọc từ `process.env.GEMINI_API_KEY`, tuyệt đối không đưa vào frontend.
+- Có `/api/health` để kiểm tra deployment và trạng thái cấu hình Gemini mà không làm lộ key.
+- Lỗi Gemini được trả về theo mã rõ ràng (`MISSING_GEMINI_API_KEY`, `GEMINI_AUTH`, `GEMINI_QUOTA`, `GEMINI_BAD_REQUEST`, `GEMINI_TIMEOUT`...) thay vì popup 500 chung chung.
+- Tệp Word dùng import `mammoth` trì hoãn; lỗi import một thư viện không còn làm hỏng toàn bộ API function khi xử lý ảnh/PDF.
+- Dùng Node `24.x` cho deployment mới; Vercel đã vô hiệu hóa Node 20 cho deployment mới từ 01/10/2026.
+
 ### Cài đặt
 
 ```bash
@@ -198,7 +208,7 @@ V7 also adds a diagnostic endpoint:
 
 `GET /api/health`
 
-A successful deployment returns HTTP 200 JSON containing `build: 2026-10-source-validation-v7`. Test this endpoint before testing Gemini.
+A successful deployment returns HTTP 200 JSON containing `build: 2026-10-source-validation-v8`. Test this endpoint before testing Gemini.
 
 Vercel Build Command: `npm run build:web`
 Output Directory: `dist`
@@ -222,3 +232,14 @@ The Mục 2 status must be red/"Chưa cung cấp văn bản quy định" when th
 `Bạn chưa cung cấp nội dung văn bản hoặc hình ảnh tài liệu cần trích xuất...`
 
 The green `✓ Đã có văn bản quy định` state is reserved for actual user-provided regulation content.
+
+## Deployment note — V8 Step 0 / HTTP 500 forensic fix
+
+V8 keeps the V7 Vercel Express entrypoint and adds a bounded 60-second function duration for `server.ts`. `/api/health` now reports `build: 2026-10-source-validation-v8`, the active Gemini model, and a boolean `geminiConfigured` flag without exposing the API key.
+
+For PDF/image digitization, Step 0 checks `/api/health` before sending the file and the server uses Gemini 3.8 Flash with low thinking for lower latency. Gemini errors are returned as structured JSON with a specific code instead of collapsing every API failure into HTTP 500.
+
+After deployment, verify:
+- `/api/health` → `build` is `2026-10-source-validation-v8`
+- `/api/health` → `geminiConfigured` is `true`
+- Then test a small PDF/image in Step 0.
