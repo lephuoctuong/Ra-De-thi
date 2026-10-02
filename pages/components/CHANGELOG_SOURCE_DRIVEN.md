@@ -1,3 +1,10 @@
+
+## Bản sửa Bước 0 / Vercel – 2026-10-02
+- Loại bỏ việc coi thông báo lỗi số hóa của Gemini là dữ liệu thật trong Mục 1/Mục 2.
+- Làm sạch `localStorage` cũ và vô hiệu hóa kết quả phụ thuộc khi thiếu nguồn quy định hợp lệ.
+- Kiểm tra kết quả `/api/extract-text` ở cả server và client trước khi lưu.
+- Điều chỉnh upload theo giới hạn request/response của Vercel; ảnh vẫn được nén phía client.
+- Cập nhật Google GenAI SDK lên nhánh 2.24.x và bỏ cấu hình sampling không cần thiết cho Gemini 3.8.
 # CHANGELOG — SOURCE-DRIVEN REGULATION
 
 ## Mục tiêu
@@ -26,7 +33,7 @@ Loại bỏ hoàn toàn sự phụ thuộc cứng vào văn bản quy định c�
 
 
 ## Phiên bản cập nhật Gemini/Vercel
-- Loại bỏ toàn bộ model Gemini 2.0 và cấu hình gọi trực tiếp bằng model đã ngừng hoạt động.
+- Loại bỏ toàn bộ model model Gemini thế hệ cũ và cấu hình gọi trực tiếp bằng model đã ngừng hoạt động.
 - Chuẩn hóa lời gọi AI server-side qua `@google/genai` với `gemini-3.8-flash` và fallback `3.7/3.6/3.5`.
 - Không inject `GEMINI_API_KEY` vào Vite frontend bundle.
 - Thêm Vercel serverless wrapper cho toàn bộ `/api/*`.

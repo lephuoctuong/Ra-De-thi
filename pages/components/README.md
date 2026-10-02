@@ -166,12 +166,15 @@ ZIP này được tối ưu để **không phụ thuộc cứng vào một văn 
 
 ## 9. Cấu hình Gemini và triển khai Vercel
 
-- Ứng dụng sử dụng **Google GenAI SDK `@google/genai`** ở phía server.
+- Ứng dụng sử dụng **Google GenAI SDK `@google/genai` 2.24.x** ở phía server.
 - Model mặc định: **`gemini-3.8-flash`**.
 - Fallback khi lỗi tạm thời/quota: `gemini-3.7-flash` → `gemini-3.6-flash` → `gemini-3.5-flash`.
-- Không còn cấu hình/model Gemini 2.0 trong mã nguồn.
+- Không còn cấu hình/model model Gemini thế hệ cũ trong mã nguồn.
 - `GEMINI_API_KEY` chỉ được đọc ở server (`process.env.GEMINI_API_KEY`), không được inject vào Vite/frontend bundle.
 - Trên Vercel, khai báo `GEMINI_API_KEY` trong **Project Settings → Environment Variables**; không commit `.env.local`.
+- Bước 0 kiểm tra kết quả số hóa trước khi lưu: các chuỗi lỗi/fallback của Gemini không được phép trở thành `lesson` hoặc `regulationSource`.
+- Trên Vercel, tệp gửi tới `/api/extract-text` được giới hạn thực tế ở **3 MB/tệp** để chừa headroom cho payload Base64/JSON dưới giới hạn request 4.5 MB của Vercel; tài liệu lớn cần chia nhỏ hoặc dán trực tiếp nội dung.
+- Kết quả số hóa quá lớn cũng được chặn trước khi trả về để tránh vượt giới hạn response của Vercel.
 
 ### Triển khai GitHub → Vercel
 

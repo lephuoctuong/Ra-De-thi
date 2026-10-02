@@ -4,13 +4,14 @@ import fs from "fs";
 import { GoogleGenAI, Type } from "@google/genai";
 
 import mammoth from "mammoth";
+import { EXTRACTION_INVALID_MESSAGE, isValidExtractedText } from "./utils/sourceValidation";
 
 export const app = express();
 const PORT = 3000;
 
 // Enable JSON and URL-encoded bodies with higher limits to support large documents and digitized materials
-app.use(express.json({ limit: "100mb" }));
-app.use(express.urlencoded({ limit: "100mb", extended: true }));
+app.use(express.json({ limit: "6mb" }));
+app.use(express.urlencoded({ limit: "6mb", extended: true }));
 
 // Helper to initialize Gemini client
 function getGeminiClient() {
@@ -340,13 +341,26 @@ app.post("/api/extract-text", async (req, res) => {
     if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || fileName?.endsWith(".docx")) {
       const buffer = Buffer.from(base64, "base64");
       const result = await mammoth.extractRawText({ buffer });
-      return res.json({ text: result.value });
+      const text = result.value?.trim() || "";
+      if (!isValidExtractedText(text)) {
+        return res.status(422).json({ error: EXTRACTION_INVALID_MESSAGE });
+      }
+      if (Buffer.byteLength(JSON.stringify({ text }), "utf8") > 4 * 1024 * 1024) {
+        return res.status(422).json({ error: "Nội dung sau khi số hóa quá lớn để truyền qua Vercel. Thầy/Cô vui lòng chia nhỏ tài liệu rồi tải từng phần." });
+      }
+      return res.json({ text });
     }
 
     // 2. If it's a plain text file (.txt)
     if (mimeType === "text/plain" || fileName?.endsWith(".txt")) {
-      const decoded = Buffer.from(base64, "base64").toString("utf-8");
-      return res.json({ text: decoded });
+      const text = Buffer.from(base64, "base64").toString("utf-8").trim();
+      if (!isValidExtractedText(text)) {
+        return res.status(422).json({ error: EXTRACTION_INVALID_MESSAGE });
+      }
+      if (Buffer.byteLength(JSON.stringify({ text }), "utf8") > 4 * 1024 * 1024) {
+        return res.status(422).json({ error: "Nội dung sau khi số hóa quá lớn để truyền qua Vercel. Thầy/Cô vui lòng chia nhỏ tài liệu rồi tải từng phần." });
+      }
+      return res.json({ text });
     }
 
     // 3. For PDF or Images, we let Gemini process with multimodal capability
@@ -375,7 +389,20 @@ app.post("/api/extract-text", async (req, res) => {
       ],
     });
 
-    res.json({ text: response.text });
+    const extractedText = response.text?.trim() || "";
+    if (!isValidExtractedText(extractedText)) {
+      return res.status(422).json({ error: EXTRACTION_INVALID_MESSAGE });
+    }
+
+    // Keep the JSON response below Vercel's 4.5 MB response limit with headroom.
+    const responseBytes = Buffer.byteLength(JSON.stringify({ text: extractedText }), "utf8");
+    if (responseBytes > 4 * 1024 * 1024) {
+      return res.status(422).json({
+        error: "Nội dung sau khi số hóa quá lớn để truyền qua Vercel. Thầy/Cô vui lòng chia nhỏ tài liệu rồi tải từng phần."
+      });
+    }
+
+    res.json({ text: extractedText });
   } catch (error) {
     handleRouteError(res, error);
   }
@@ -413,7 +440,6 @@ Bắt buộc trả về đúng định dạng JSON được chỉ định.`;
         { text: systemPrompt }
       ],
       config: {
-        temperature: 0.1,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -513,7 +539,6 @@ LƯU Ý QUAN TRỌNG:
       model: "gemini-3.8-flash",
       contents: textPrompt,
       config: {
-        temperature: 0.2,
       },
     });
 
@@ -565,7 +590,6 @@ ${prompt}
       model: "gemini-3.8-flash",
       contents: textPrompt,
       config: {
-        temperature: 0.2,
       },
     });
 
@@ -638,7 +662,6 @@ Chú ý: Công thức toán và phương trình hóa học phải trình bày ch
       model: "gemini-3.8-flash",
       contents: textPrompt,
       config: {
-        temperature: 0.3,
       },
     });
 
@@ -703,7 +726,6 @@ Chú ý: Công thức toán và phương trình hóa học phải dùng chuẩn 
       model: "gemini-3.8-flash",
       contents: textPrompt,
       config: {
-        temperature: 0.4,
       },
     });
 

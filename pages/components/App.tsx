@@ -27,6 +27,7 @@ import StudentSubmissionsAnalytics from './pages/StudentSubmissionsAnalytics';
 import BackupRestore from './pages/BackupRestore';
 import StudentExamPortal from './pages/StudentExamPortal';
 import { getExamById } from './utils/examStorage';
+import { isValidSourceText } from './utils/sourceValidation';
 
 // Importing Constants
 import {
@@ -47,7 +48,15 @@ const App: React.FC = () => {
   // Read state with fallbacks on bootup
   const [lesson, setLesson] = useState(() => {
     const stored = localStorage.getItem('qbank_lesson');
-    if (!stored) return DEFAULT_LESSON;
+
+    // No saved value on a fresh installation: keep the existing built-in
+    // teaching template. If a key exists but contains an invalid/old
+    // extraction fallback, clear it instead of displaying it as source data.
+    if (stored === null) return DEFAULT_LESSON;
+    if (!isValidSourceText(stored)) {
+      localStorage.removeItem('qbank_lesson');
+      return '';
+    }
     if (stored.includes('TOÁN LỚP 10') || stored.includes('PHƯƠNG TRÌNH BẬC HAI')) {
       localStorage.setItem('qbank_lesson', DEFAULT_LESSON);
       return DEFAULT_LESSON;
@@ -55,9 +64,16 @@ const App: React.FC = () => {
     return stored;
   });
 
-  // Văn bản quy định là nguồn bắt buộc do người dùng cung cấp - tuyệt đối không có nguồn mặc định
+  // Văn bản quy định là nguồn bắt buộc do người dùng cung cấp - tuyệt đối không có nguồn mặc định.
+  // Invalid extraction/error messages from older versions are discarded on boot.
   const [regulationSource, setRegulationSource] = useState<string>(() => {
-    return localStorage.getItem('qbank_regulation_source') || '';
+    const stored = localStorage.getItem('qbank_regulation_source');
+    if (stored === null) return '';
+    if (!isValidSourceText(stored)) {
+      localStorage.removeItem('qbank_regulation_source');
+      return '';
+    }
+    return stored;
   });
 
   const [sampleExam, setSampleExam] = useState(() => {
@@ -123,10 +139,22 @@ const App: React.FC = () => {
   });
   const [promptStep5, setPromptStep5] = useState(() => localStorage.getItem('qbank_prompt_step5') || PROMPT_STEP5);
 
-  const [resultStep1, setResultStep1] = useState(() => localStorage.getItem('qbank_result_step1') || '');
-  const [resultStep2, setResultStep2] = useState(() => localStorage.getItem('qbank_result_step2') || '');
-  const [resultStep3, setResultStep3] = useState(() => localStorage.getItem('qbank_result_step3') || '');
-  const [resultStep5, setResultStep5] = useState(() => localStorage.getItem('qbank_result_step5') || '');
+  const [resultStep1, setResultStep1] = useState(() => {
+    const source = localStorage.getItem('qbank_regulation_source') || '';
+    return isValidSourceText(source) ? (localStorage.getItem('qbank_result_step1') || '') : '';
+  });
+  const [resultStep2, setResultStep2] = useState(() => {
+    const source = localStorage.getItem('qbank_regulation_source') || '';
+    return isValidSourceText(source) ? (localStorage.getItem('qbank_result_step2') || '') : '';
+  });
+  const [resultStep3, setResultStep3] = useState(() => {
+    const source = localStorage.getItem('qbank_regulation_source') || '';
+    return isValidSourceText(source) ? (localStorage.getItem('qbank_result_step3') || '') : '';
+  });
+  const [resultStep5, setResultStep5] = useState(() => {
+    const source = localStorage.getItem('qbank_regulation_source') || '';
+    return isValidSourceText(source) ? (localStorage.getItem('qbank_result_step5') || '') : '';
+  });
   const [subject, setSubject] = useState<string>(() => localStorage.getItem('qbank_subject') || 'Sinh học');
   const [grade, setGrade] = useState<string>(() => localStorage.getItem('qbank_grade') || '9');
   const [examDuration, setExamDuration] = useState<number>(() => {
@@ -140,7 +168,18 @@ const App: React.FC = () => {
   // Khi người dùng thay văn bản quy định: phải vô hiệu hóa các kết quả được tạo từ văn bản quy định cũ, không trộn dữ liệu cũ
   const prevRegulationSourceRef = useRef<string>(regulationSource);
   useEffect(() => {
-    if (prevRegulationSourceRef.current && prevRegulationSourceRef.current.trim() !== '' && prevRegulationSourceRef.current !== regulationSource) {
+    const regulationChanged =
+      prevRegulationSourceRef.current &&
+      prevRegulationSourceRef.current.trim() !== '' &&
+      prevRegulationSourceRef.current !== regulationSource;
+
+    // If the saved regulation source was invalid/empty (including an old
+    // extraction fallback), dependent AI results must not survive boot.
+    // This prevents stale Step 1–5 outputs from being reused with no valid
+    // mandatory regulation source.
+    const regulationIsInvalid = !isValidSourceText(regulationSource);
+
+    if (regulationChanged || regulationIsInvalid) {
       setResultStep1('');
       setResultStep2('');
       setResultStep3('');
@@ -150,6 +189,7 @@ const App: React.FC = () => {
       localStorage.removeItem('qbank_result_step3');
       localStorage.removeItem('qbank_result_step5');
     }
+
     prevRegulationSourceRef.current = regulationSource;
     localStorage.setItem('qbank_regulation_source', regulationSource);
   }, [regulationSource]);
