@@ -35,7 +35,7 @@ export default async function handler(req: any, res: any) {
     parts.push({ text: fileData ? userPrompt : `${userPrompt}\n\nNội dung:\n${text || ''}` });
 
     // 3. Sử dụng các model chuẩn chính thức từ Google Gemini
-    const models = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+    const models = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-3.8-flash-lite'];
     let lastErrorMessage = '';
 
     for (const model of models) {

@@ -40,7 +40,7 @@ async function generateContentWithRetry(ai: any, params: {
   const requestedModel = params.model || "gemini-2.5-flash";
   candidateModels.push(requestedModel);
 
-  const fallbackList = ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"];
+  const fallbackList = ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.8-flash-lite"];
   for (const m of fallbackList) {
     if (!candidateModels.includes(m)) {
       candidateModels.push(m);
