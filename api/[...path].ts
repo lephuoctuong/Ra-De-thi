@@ -6,6 +6,6 @@
  * entrypoints (root server.ts + api/[...path].ts) and makes routing
  * deterministic.
  */
-import { app } from "../backend.ts";
+import { app } from "../backend";
 
 export default app;
