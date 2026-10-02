@@ -18,6 +18,7 @@ import {
   DEFAULT_MATRIX_TEMPLATE 
 } from '../constants';
 import { getSubjectTemplate } from '../utils/subjectTemplates';
+import { EXTRACTION_INVALID_MESSAGE, isValidExtractedText, isValidSourceText, sanitizeSourceText } from '../utils/sourceValidation';
 
 export const EXAM_DURATION_OPTIONS = [15, 45, 60, 90, 120, 180];
 
@@ -146,6 +147,7 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
   onNext
 }) => {
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
 
@@ -156,8 +158,15 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
     matrix: useRef<HTMLInputElement>(null),
   };
 
-  const detectedGrade = useMemo(() => detectGradeFromText(lesson), [lesson]);
-  const detectedSubject = useMemo(() => detectSubjectFromText(lesson), [lesson]);
+  // HARD UI GUARD: the value rendered in these source fields must always be the
+  // same sanitized value used by the status badge. This prevents an old/stale
+  // fallback message from ever being displayed as if it were real source data.
+  const safeLesson = useMemo(() => sanitizeSourceText(lesson), [lesson]);
+  const safeRegulationSource = useMemo(() => sanitizeSourceText(regulationSource), [regulationSource]);
+  const lessonIsValid = useMemo(() => safeLesson.length > 0 && isValidSourceText(safeLesson), [safeLesson]);
+  const regulationIsValid = useMemo(() => safeRegulationSource.length > 0 && isValidSourceText(safeRegulationSource), [safeRegulationSource]);
+  const detectedGrade = useMemo(() => detectGradeFromText(safeLesson), [safeLesson]);
+  const detectedSubject = useMemo(() => detectSubjectFromText(safeLesson), [safeLesson]);
 
   // Priority 1: Prop subject from App.tsx state. Priority 2: Parsed from sampleExam. Priority 3: Detected from lesson.
   const activeSubject = useMemo(() => {
@@ -317,7 +326,7 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
     setSampleExam(tpl.sampleExam);
     setMatrix(tpl.matrix);
     if (setExamDuration) setExamDuration(activeDuration);
-    if (!regulationSource.trim()) {
+    if (!isValidSourceText(regulationSource)) {
       triggerNotification(`Đã nạp bài học & đề mẫu môn ${activeSubject} - Lớp ${activeGrade}. Vui lòng nạp Văn bản quy định bắt buộc để tiếp tục!`);
     } else {
       triggerNotification(`Đã nạp bộ dữ liệu mẫu bài học môn ${activeSubject} - Lớp ${activeGrade} (SỞ GD & ĐT TỈNH QUẢNG TRỊ - THCS GIO LINH)!`);
@@ -345,6 +354,17 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
     setSaveStatus(text);
     setTimeout(() => setSaveStatus(null), 4000);
   };
+
+  // Self-heal legacy/localStorage values that contain an extraction fallback.
+  // This also protects the UI when an older deployment hands invalid source text
+  // into this page during a hot update or restore operation.
+  useEffect(() => {
+    if (lesson && !isValidSourceText(lesson)) { setLesson(''); localStorage.removeItem('qbank_lesson'); }
+  }, [lesson, setLesson]);
+
+  useEffect(() => {
+    if (regulationSource && !isValidSourceText(regulationSource)) { setRegulationSource(''); localStorage.removeItem('qbank_regulation_source'); }
+  }, [regulationSource, setRegulationSource]);
 
   const compressImage = (file: File): Promise<{ base64: string, mimeType: string }> => {
     return new Promise((resolve, reject) => {
@@ -393,17 +413,28 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
   };
 
   const processFile = async (file: File, fieldId: 'lesson' | 'regulationSource' | 'sampleExam' | 'matrix') => {
-    // Check file size limits to prevent Nginx and Server Payload Too Large Issues
-    if (file.name.endsWith('.pdf') && file.size > 2 * 1024 * 1024) {
-      alert(`Tệp PDF "${file.name}" quá lớn (${(file.size / 1024 / 1024).toFixed(2)} MB).\n\nĐể hệ thống hoạt động ổn định và tránh lỗi quá tải dung lượng, thầy cô vui lòng:\n1. Chia nhỏ PDF hoặc nén PDF trước khi tải lên (nên dưới 2MB).\n2. Hoặc sao chép (copy) và dán trực tiếp nội dung văn bản vào ô nhập phía dưới.`);
+    // Vercel Functions impose a 4.5 MB request-body limit. Because the file is
+    // sent as base64 inside JSON, enforce the limit on the actual encoded payload.
+    // Images keep the existing client-side compression feature, so a large raw
+    // image may still be accepted when its compressed payload fits.
+    const MAX_NON_IMAGE_FILE_BYTES = 3 * 1024 * 1024;
+    const MAX_RAW_IMAGE_BYTES = 15 * 1024 * 1024;
+
+    if (file.type.startsWith('image/') && file.size > MAX_RAW_IMAGE_BYTES) {
+      const message = `Tệp hình ảnh "${file.name}" vượt quá giới hạn ${MAX_RAW_IMAGE_BYTES / 1024 / 1024} MB. Thầy/Cô vui lòng chọn ảnh nhỏ hơn hoặc giảm độ phân giải trước khi tải lên.`;
+      setUploadError(message);
+      alert(message);
       return;
     }
 
-    if (file.size > 15 * 1024 * 1024) {
-      alert(`Tệp "${file.name}" vượt quá giới hạn 15MB. Thầy cô vui lòng tối ưu hóa hoặc dán trực tiếp văn bản.`);
+    if (!file.type.startsWith('image/') && file.size > MAX_NON_IMAGE_FILE_BYTES) {
+      const message = `Tệp "${file.name}" quá lớn (${(file.size / 1024 / 1024).toFixed(2)} MB).\n\nKhi triển khai trên Vercel, hệ thống giới hạn dữ liệu gửi tới API ở mức 4.5 MB. Thầy/Cô vui lòng nén/chia nhỏ tệp xuống dưới 3 MB hoặc dán trực tiếp nội dung văn bản vào ô nhập.`;
+      setUploadError(message);
+      alert(message);
       return;
     }
 
+    setUploadError(null);
     setUploadingId(fieldId);
 
     try {
@@ -429,10 +460,16 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
         });
       }
 
+      const requestBody = JSON.stringify({ base64, mimeType, fileName });
+      const requestBytes = new TextEncoder().encode(requestBody).byteLength;
+      if (requestBytes > 4 * 1024 * 1024) {
+        throw new Error("Dữ liệu tệp sau khi mã hóa quá lớn để gửi qua Vercel. Thầy/Cô vui lòng giảm dung lượng/chia nhỏ tệp hoặc dán trực tiếp nội dung văn bản.");
+      }
+
       const response = await fetch("/api/extract-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ base64, mimeType, fileName }),
+        body: requestBody,
       });
 
       const responseText = await response.text();
@@ -453,7 +490,13 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
         throw new Error(data.error || "Gặp lỗi khi số hóa tệp.");
       }
 
-      const extractedText = data.text || "";
+      const extractedText = typeof data.text === 'string' ? data.text.trim() : '';
+
+      // Never persist a Gemini/OCR fallback, empty response, or extraction error
+      // as if it were real lesson/regulation content.
+      if (!isValidExtractedText(extractedText)) {
+        throw new Error(data.error || EXTRACTION_INVALID_MESSAGE);
+      }
       
       // Auto-detect subject and grade from digitized document and sync across workflow
       const autoSub = detectSubjectFromText(extractedText);
@@ -469,23 +512,28 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
       else if (fieldId === 'sampleExam') { currentVal = sampleExam; setter = setSampleExam; }
       else { currentVal = matrix; setter = setMatrix; }
 
-      if (currentVal.trim()) {
+      if (currentVal.trim() && isValidSourceText(currentVal)) {
         if (window.confirm("Bạn muốn GHI ĐÈ nội dung cũ hay CHÈN NỐI TIẾP nội dung mới của tệp này?")) {
           setter(extractedText);
         } else {
           setter((currentVal + "\n\n=== NỘI DUNG TỪ TỆP: " + fileName + " ===\n" + extractedText).trim());
         }
       } else {
+        // If the old value was an extraction fallback, replace it rather than
+        // appending the real document to an error message.
         setter(extractedText);
       }
-      if (fieldId === 'regulationSource' || regulationSource.trim()) {
+      setUploadError(null);
+      if (fieldId === 'regulationSource' || isValidSourceText(regulationSource)) {
         triggerNotification(`Đã trích xuất & số hóa thành công tệp: ${fileName}! Dữ liệu văn bản quy định là nguồn chính thức dùng cho Bước 1, 2, 3.`);
       } else {
         triggerNotification(`Đã trích xuất & số hóa thành công tệp: ${fileName}! Thầy/Cô vui lòng cung cấp thêm Văn bản quy định (Mục 2) trước khi chuyển sang Bước 1.`);
       }
     } catch (err: any) {
       console.error(err);
-      alert(`Lỗi số hóa tệp: ${err.message || err}`);
+      const message = err?.message || 'Đã xảy ra lỗi khi số hóa tệp.';
+      setUploadError(message);
+      alert(`Lỗi số hóa tệp: ${message}`);
     } finally {
       setUploadingId(null);
     }
@@ -596,6 +644,13 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
         </div>
       </div>
 
+      {uploadError && (
+        <div className="p-4 bg-rose-50 text-rose-800 border border-rose-200 rounded-2xl flex items-start gap-2 text-sm font-semibold animate-fade-in shadow-sm">
+          <span className="text-rose-600 text-base leading-5">⚠️</span>
+          <span>{uploadError}</span>
+        </div>
+      )}
+
       {saveStatus && (
         <div className="p-4 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-2xl flex items-center gap-2 text-sm font-semibold animate-fade-in shadow-sm">
           <CheckCircle className="text-emerald-600" size={18} />
@@ -622,25 +677,25 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
           {renderFileDropZone('lesson')}
 
           <textarea
-            value={lesson}
-            onChange={(e) => setLesson(e.target.value)}
+            value={safeLesson}
+            onChange={(e) => setLesson(sanitizeSourceText(e.target.value))}
             placeholder="Nội dung sách giáo khoa hoặc giáo án sẽ xuất hiện ở đây sau khi tải tệp lên, hoặc bạn có thể tự dán thủ công..."
             className="w-full h-48 p-4 border border-slate-200 rounded-2xl bg-slate-50/30 text-sm focus:bg-white focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all resize-none font-sans"
           />
           <div className="flex justify-between items-center text-xs font-semibold text-slate-400">
             <span>Dùng tệp Ảnh, PDF, Word hoặc gõ trực tiếp</span>
-            <span>{lesson.length.toLocaleString()} ký tự</span>
+            <span>{safeLesson.length.toLocaleString()} ký tự</span>
           </div>
         </div>
 
         {/* Unit 2: văn bản quy định / 7791 */}
         <div className={`bg-white p-6 rounded-3xl border shadow-sm hover:shadow-md transition-all flex flex-col space-y-4 ${
-          !regulationSource.trim() ? 'border-rose-300 ring-2 ring-rose-100' : 'border-slate-200'
+          !regulationIsValid ? 'border-rose-300 ring-2 ring-rose-100' : 'border-slate-200'
         }`}>
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-3">
               <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                !regulationSource.trim() ? 'bg-rose-50 text-rose-600' : 'bg-blue-50 text-blue-600'
+                !regulationIsValid ? 'bg-rose-50 text-rose-600' : 'bg-blue-50 text-blue-600'
               }`}>
                 <FileText size={20} />
               </div>
@@ -653,7 +708,7 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
             </div>
 
             {/* Status indicator */}
-            {!regulationSource.trim() ? (
+            {!regulationIsValid ? (
               <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold rounded-xl animate-pulse">
                 Chưa cung cấp văn bản quy định
               </span>
@@ -664,7 +719,7 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
             )}
           </div>
 
-          {!regulationSource.trim() && (
+          {!regulationIsValid && (
             <div className="p-3 bg-rose-50/90 border border-rose-200 rounded-2xl text-xs text-rose-800 leading-relaxed font-medium">
               ⚠️ <strong>Yêu cầu bắt buộc:</strong> Thầy/Cô vui lòng tải lên tệp văn bản quy định (Ảnh, PDF, Word) hoặc dán trực tiếp nội dung văn bản quy định vào ô dưới. Hệ thống không sử dụng văn bản quy định mặc định và bắt buộc phải có văn bản quy định mới được chuyển sang Bước 1.
             </div>
@@ -673,20 +728,20 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
           {renderFileDropZone('regulationSource')}
 
           <textarea
-            value={regulationSource}
-            onChange={(e) => setRegulationSource(e.target.value)}
+            value={safeRegulationSource}
+            onChange={(e) => setRegulationSource(sanitizeSourceText(e.target.value))}
             placeholder="Nội dung văn bản quy định hoặc quy chuẩn ra đề thi của cơ sở đào tạo do Thầy/Cô cung cấp (Bắt buộc)..."
             className={`w-full h-48 p-4 border rounded-2xl text-sm outline-none transition-all resize-none font-sans ${
-              !regulationSource.trim()
+              !regulationIsValid
                 ? 'border-rose-200 bg-rose-50/20 focus:bg-white focus:border-rose-500'
                 : 'border-slate-200 bg-slate-50/30 focus:bg-white focus:ring-2 focus:ring-indigo-500/10 focus:border-indigo-500'
             }`}
           />
           <div className="flex justify-between items-center text-xs font-semibold">
-            <span className={!regulationSource.trim() ? 'text-rose-600 font-bold' : 'text-slate-400'}>
-              {!regulationSource.trim() ? 'Chưa cung cấp văn bản quy định — bắt buộc phải có' : 'Nguồn chính thức dùng xuyên suốt Bước 1, 2, 3'}
+            <span className={!regulationIsValid ? 'text-rose-600 font-bold' : 'text-slate-400'}>
+              {!regulationIsValid ? 'Chưa có văn bản quy định hợp lệ — bắt buộc phải có' : 'Nguồn chính thức dùng xuyên suốt Bước 1, 2, 3'}
             </span>
-            <span className={!regulationSource.trim() ? 'text-rose-500' : 'text-slate-400'}>{regulationSource.length.toLocaleString()} ký tự</span>
+            <span className={!regulationIsValid ? 'text-rose-500' : 'text-slate-400'}>{safeRegulationSource.length.toLocaleString()} ký tự</span>
           </div>
         </div>
 
@@ -891,7 +946,7 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
 
       {/* Next Step Control */}
       <div className="flex flex-col items-end gap-2 pt-4">
-        {!regulationSource.trim() && (
+        {!regulationIsValid && (
           <p className="text-xs text-rose-600 font-bold flex items-center gap-1.5 bg-rose-50 border border-rose-200 px-3.5 py-2 rounded-xl">
             <span>⚠️</span>
             <span>Mục "2. Văn bản quy định (văn bản quy định)" là nguồn bắt buộc do người dùng cung cấp. Vui lòng cung cấp văn bản quy định trước khi chuyển sang Bước 1!</span>
@@ -899,9 +954,9 @@ const SourceSetup: React.FC<SourceSetupProps> = ({
         )}
         <button
           onClick={onNext}
-          disabled={!regulationSource.trim() || (!lesson.trim() && !sampleExam.trim())}
+          disabled={!regulationIsValid || (!lessonIsValid && !isValidSourceText(sampleExam))}
           className={`px-8 py-4 rounded-2xl font-extrabold flex items-center gap-2 transition-all text-base shadow-lg ${
-            (!regulationSource.trim() || (!lesson.trim() && !sampleExam.trim()))
+            (!regulationIsValid || (!lessonIsValid && !isValidSourceText(sampleExam)))
             ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
             : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:shadow-indigo-100 hover:translate-y-[-1px]'
           }`}

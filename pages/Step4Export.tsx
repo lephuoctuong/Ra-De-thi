@@ -825,7 +825,7 @@ ${bodyHtml}
                     <div className="absolute inset-0 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
                   </div>
                   <div className="space-y-1 select-none">
-                    <p className="text-sm font-bold text-slate-800 animate-pulse">Hệ thống AI Gemini 3.5 Flash đang phân tích sơ đồ hình học...</p>
+                    <p className="text-sm font-bold text-slate-800 animate-pulse">Hệ thống AI Gemini 3.8 Flash đang phân tích sơ đồ hình học...</p>
                     <p className="text-xs text-slate-400 max-w-xs mx-auto leading-relaxed">Đang quét sơ đồ, phân định Bounding Box, tính toán sai số khoảng cách lề và tách phương trình toán sangLaTeX.</p>
                   </div>
                 </div>

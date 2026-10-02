@@ -27,6 +27,7 @@ import StudentSubmissionsAnalytics from './pages/StudentSubmissionsAnalytics';
 import BackupRestore from './pages/BackupRestore';
 import StudentExamPortal from './pages/StudentExamPortal';
 import { getExamById } from './utils/examStorage';
+import { isValidSourceText, sanitizeSourceText } from './utils/sourceValidation';
 
 // Importing Constants
 import {
@@ -44,21 +45,110 @@ const App: React.FC = () => {
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [selectedExamForSubmissions, setSelectedExamForSubmissions] = useState<string | undefined>();
 
+  // V6 source invariant: sanitize persisted source data synchronously BEFORE any
+  // useState initializer runs. This removes the possibility of an old deployment
+  // leaving a fallback sentence in state for the first render. Valid teacher data
+  // is never deleted.
+  const SOURCE_SCHEMA_VERSION = '2026-10-source-validation-v6';
+  const SOURCE_KEYS = { lesson: 'qbank_source_v6_lesson', regulation: 'qbank_source_v6_regulation' } as const;
+  const sanitizePersistedSources = () => {
+    // V6 deliberately uses fresh keys so no stale value from an older deployment
+    // can be rehydrated into the source fields. Valid legacy user content is migrated.
+    const legacyLesson = localStorage.getItem('qbank_lesson');
+    const legacyRegulation = localStorage.getItem('qbank_regulation_source');
+    const v6Lesson = localStorage.getItem(SOURCE_KEYS.lesson);
+    const v6Regulation = localStorage.getItem(SOURCE_KEYS.regulation);
+
+    const cleanLesson = sanitizeSourceText(v6Lesson ?? legacyLesson ?? '');
+    const cleanRegulation = sanitizeSourceText(v6Regulation ?? legacyRegulation ?? '');
+
+    if (cleanLesson) localStorage.setItem(SOURCE_KEYS.lesson, cleanLesson);
+    else localStorage.removeItem(SOURCE_KEYS.lesson);
+    if (cleanRegulation) localStorage.setItem(SOURCE_KEYS.regulation, cleanRegulation);
+    else localStorage.removeItem(SOURCE_KEYS.regulation);
+
+    // Remove legacy keys so older code paths cannot rehydrate stale fallback text.
+    localStorage.removeItem('qbank_lesson');
+    localStorage.removeItem('qbank_regulation_source');
+
+    if (!cleanRegulation) {
+      localStorage.removeItem('qbank_result_step1');
+      localStorage.removeItem('qbank_result_step2');
+      localStorage.removeItem('qbank_result_step3');
+      localStorage.removeItem('qbank_result_step5');
+    }
+    localStorage.setItem('qbank_source_schema_version', SOURCE_SCHEMA_VERSION);
+  };
+
+  sanitizePersistedSources();
+
   // Read state with fallbacks on bootup
   const [lesson, setLesson] = useState(() => {
-    const stored = localStorage.getItem('qbank_lesson');
-    if (!stored) return DEFAULT_LESSON;
+    const stored = localStorage.getItem(SOURCE_KEYS.lesson);
+
+    // No saved value on a fresh installation: keep the existing built-in
+    // teaching template. If a key exists but contains an invalid/old
+    // extraction fallback, clear it instead of displaying it as source data.
+    if (stored === null) return DEFAULT_LESSON;
+    if (!isValidSourceText(stored)) {
+      localStorage.removeItem(SOURCE_KEYS.lesson);
+      return '';
+    }
+    const sanitized = sanitizeSourceText(stored);
+    if (!sanitized) {
+      localStorage.removeItem(SOURCE_KEYS.lesson);
+      return '';
+    }
     if (stored.includes('TOÁN LỚP 10') || stored.includes('PHƯƠNG TRÌNH BẬC HAI')) {
-      localStorage.setItem('qbank_lesson', DEFAULT_LESSON);
+      localStorage.setItem(SOURCE_KEYS.lesson, DEFAULT_LESSON);
       return DEFAULT_LESSON;
     }
-    return stored;
+    return sanitized;
   });
 
-  // Văn bản quy định là nguồn bắt buộc do người dùng cung cấp - tuyệt đối không có nguồn mặc định
+  // Văn bản quy định là nguồn bắt buộc do người dùng cung cấp - tuyệt đối không có nguồn mặc định.
+  // Invalid extraction/error messages from older versions are discarded on boot.
   const [regulationSource, setRegulationSource] = useState<string>(() => {
-    return localStorage.getItem('qbank_regulation_source') || '';
+    const stored = localStorage.getItem(SOURCE_KEYS.regulation);
+    if (stored === null) return '';
+    const sanitized = sanitizeSourceText(stored);
+    if (!sanitized) {
+      localStorage.removeItem(SOURCE_KEYS.regulation);
+      return '';
+    }
+    return sanitized;
   });
+
+  // Parent-level setters are also sanitized. Any child component, restore flow,
+  // or future code path that attempts to write extraction fallback text is converted
+  // to the empty source immediately.
+  const updateLesson = (value: string) => {
+    const safe = sanitizeSourceText(value);
+    setLesson(safe);
+    localStorage.setItem(SOURCE_KEYS.lesson, safe);
+  };
+
+  const updateRegulationSource = (value: string) => {
+    const safe = sanitizeSourceText(value);
+    setRegulationSource(safe);
+    localStorage.setItem(SOURCE_KEYS.regulation, safe);
+    if (!safe) {
+      localStorage.removeItem('qbank_result_step1');
+      localStorage.removeItem('qbank_result_step2');
+      localStorage.removeItem('qbank_result_step3');
+      localStorage.removeItem('qbank_result_step5');
+    }
+  };
+
+  // Absolute invariant: regulationSource is either valid user source or empty.
+  // This is intentionally redundant with SourceSetup so imported/session data cannot
+  // reintroduce the old extraction fallback into the workflow.
+  useEffect(() => {
+    if (regulationSource && !isValidSourceText(regulationSource)) {
+      setRegulationSource('');
+      localStorage.removeItem(SOURCE_KEYS.regulation);
+    }
+  }, [regulationSource]);
 
   const [sampleExam, setSampleExam] = useState(() => {
     const stored = localStorage.getItem('qbank_sample_exam');
@@ -123,10 +213,22 @@ const App: React.FC = () => {
   });
   const [promptStep5, setPromptStep5] = useState(() => localStorage.getItem('qbank_prompt_step5') || PROMPT_STEP5);
 
-  const [resultStep1, setResultStep1] = useState(() => localStorage.getItem('qbank_result_step1') || '');
-  const [resultStep2, setResultStep2] = useState(() => localStorage.getItem('qbank_result_step2') || '');
-  const [resultStep3, setResultStep3] = useState(() => localStorage.getItem('qbank_result_step3') || '');
-  const [resultStep5, setResultStep5] = useState(() => localStorage.getItem('qbank_result_step5') || '');
+  const [resultStep1, setResultStep1] = useState(() => {
+    const source = localStorage.getItem(SOURCE_KEYS.regulation) || '';
+    return isValidSourceText(source) ? (localStorage.getItem('qbank_result_step1') || '') : '';
+  });
+  const [resultStep2, setResultStep2] = useState(() => {
+    const source = localStorage.getItem(SOURCE_KEYS.regulation) || '';
+    return isValidSourceText(source) ? (localStorage.getItem('qbank_result_step2') || '') : '';
+  });
+  const [resultStep3, setResultStep3] = useState(() => {
+    const source = localStorage.getItem(SOURCE_KEYS.regulation) || '';
+    return isValidSourceText(source) ? (localStorage.getItem('qbank_result_step3') || '') : '';
+  });
+  const [resultStep5, setResultStep5] = useState(() => {
+    const source = localStorage.getItem(SOURCE_KEYS.regulation) || '';
+    return isValidSourceText(source) ? (localStorage.getItem('qbank_result_step5') || '') : '';
+  });
   const [subject, setSubject] = useState<string>(() => localStorage.getItem('qbank_subject') || 'Sinh học');
   const [grade, setGrade] = useState<string>(() => localStorage.getItem('qbank_grade') || '9');
   const [examDuration, setExamDuration] = useState<number>(() => {
@@ -135,12 +237,25 @@ const App: React.FC = () => {
   });
 
   // Persists states in localStorage
-  useEffect(() => { localStorage.setItem('qbank_lesson', lesson); }, [lesson]);
+  useEffect(() => {
+    localStorage.setItem(SOURCE_KEYS.lesson, isValidSourceText(lesson) ? lesson : '');
+  }, [lesson]);
   
   // Khi người dùng thay văn bản quy định: phải vô hiệu hóa các kết quả được tạo từ văn bản quy định cũ, không trộn dữ liệu cũ
   const prevRegulationSourceRef = useRef<string>(regulationSource);
   useEffect(() => {
-    if (prevRegulationSourceRef.current && prevRegulationSourceRef.current.trim() !== '' && prevRegulationSourceRef.current !== regulationSource) {
+    const regulationChanged =
+      prevRegulationSourceRef.current &&
+      prevRegulationSourceRef.current.trim() !== '' &&
+      prevRegulationSourceRef.current !== regulationSource;
+
+    // If the saved regulation source was invalid/empty (including an old
+    // extraction fallback), dependent AI results must not survive boot.
+    // This prevents stale Step 1–5 outputs from being reused with no valid
+    // mandatory regulation source.
+    const regulationIsInvalid = !isValidSourceText(regulationSource);
+
+    if (regulationChanged || regulationIsInvalid) {
       setResultStep1('');
       setResultStep2('');
       setResultStep3('');
@@ -150,8 +265,9 @@ const App: React.FC = () => {
       localStorage.removeItem('qbank_result_step3');
       localStorage.removeItem('qbank_result_step5');
     }
+
     prevRegulationSourceRef.current = regulationSource;
-    localStorage.setItem('qbank_regulation_source', regulationSource);
+    localStorage.setItem(SOURCE_KEYS.regulation, isValidSourceText(regulationSource) ? regulationSource : '');
   }, [regulationSource]);
 
   useEffect(() => { localStorage.setItem('qbank_sample_exam', sampleExam); }, [sampleExam]);
@@ -304,8 +420,8 @@ const App: React.FC = () => {
   const handleClearAllData = async () => {
     if (confirm('CẢNH BÁO: Hành động này sẽ xóa sạch TOÀN BỘ dữ liệu bài soạn của bạn trên trình duyệt này. Bạn có chắc chắn?')) {
       localStorage.clear();
-      setLesson('');
-      setRegulationSource('');
+      updateLesson('');
+      updateRegulationSource('');
       setSampleExam('');
       setMatrix('');
       setSubject('Sinh học');
@@ -322,8 +438,8 @@ const App: React.FC = () => {
 
   // Nạp lại gói đề thi từ Kho đề thi vào các bước biên soạn
   const handleLoadExamIntoWorkflow = (pkg: SavedExamPackage) => {
-    if (pkg.lesson) setLesson(pkg.lesson);
-    if (pkg.regulationSource) setRegulationSource(pkg.regulationSource);
+    if (pkg.lesson && isValidSourceText(pkg.lesson)) updateLesson(sanitizeSourceText(pkg.lesson));
+    if (pkg.regulationSource && isValidSourceText(pkg.regulationSource)) updateRegulationSource(sanitizeSourceText(pkg.regulationSource));
     if (pkg.sampleExam) setSampleExam(pkg.sampleExam);
     if (pkg.matrix) setMatrix(pkg.matrix);
     if (pkg.subject) setSubject(pkg.subject);
@@ -347,7 +463,7 @@ const App: React.FC = () => {
   };
 
   const handleNavigate = (targetView: ViewState) => {
-    if (['M1', 'M2', 'M3', 'M4', 'M5'].includes(targetView) && !regulationSource.trim()) {
+    if (['M1', 'M2', 'M3', 'M4', 'M5'].includes(targetView) && !isValidSourceText(regulationSource)) {
       alert("Mục '2. Văn bản quy định' là nguồn bắt buộc do người dùng cung cấp.\n\nThầy/Cô vui lòng cung cấp văn bản quy định tại Bước 0 trước khi chuyển sang Bước 1!");
       setCurrentView('M0');
       return;
@@ -357,7 +473,7 @@ const App: React.FC = () => {
 
   const renderContent = () => {
     // Chặn tuyệt đối không cho chuyển sang các bước xử lý nếu chưa cung cấp văn bản quy định
-    if (['M1', 'M2', 'M3', 'M4', 'M5'].includes(currentView) && !regulationSource.trim()) {
+    if (['M1', 'M2', 'M3', 'M4', 'M5'].includes(currentView) && !isValidSourceText(regulationSource)) {
       return (
         <div className="p-8 max-w-4xl mx-auto my-12 bg-white rounded-3xl border border-rose-200 shadow-xl text-center space-y-4">
           <div className="w-16 h-16 mx-auto rounded-2xl bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600 font-extrabold text-2xl">
@@ -382,9 +498,9 @@ const App: React.FC = () => {
         return (
           <SourceSetup
             lesson={lesson}
-            setLesson={setLesson}
+            setLesson={updateLesson}
             regulationSource={regulationSource}
-            setRegulationSource={setRegulationSource}
+            setRegulationSource={updateRegulationSource}
             sampleExam={sampleExam}
             setSampleExam={setSampleExam}
             matrix={matrix}
@@ -558,7 +674,7 @@ const App: React.FC = () => {
   };
 
   const steps = [
-    { id: 'M0', title: 'Bước 0', subtitle: 'Nạp tệp nguồn', icon: Home, isCompleted: !!(regulationSource.trim() && (lesson.trim() || sampleExam.trim())) },
+    { id: 'M0', title: 'Bước 0', subtitle: 'Nạp tệp nguồn', icon: Home, isCompleted: !!(isValidSourceText(regulationSource) && (isValidSourceText(lesson) || sampleExam.trim())) },
     { id: 'M1', title: 'Bước 1', subtitle: 'Phân tích tài liệu', icon: BookOpen, isCompleted: !!resultStep1.trim() },
     { id: 'M2', title: 'Bước 2', subtitle: 'Ma trận & Đặc tả', icon: Layers, isCompleted: !!resultStep2.trim() },
     { id: 'M3', title: 'Bước 3', subtitle: 'Tạo đề kiểm tra gốc', icon: PlusCircle, isCompleted: !!resultStep3.trim() },

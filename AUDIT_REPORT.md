@@ -73,9 +73,17 @@ Smoke test results:
 - Representative real lesson text => VALID
 
 
-## V4 hard UI invariant
+## V5 hard UI invariant
 - `SourceSetup` renders only `sanitizeSourceText(...)` values for Mục 1 and Mục 2.
 - Status badges are computed from those exact sanitized values.
 - Invalid persisted/imported regulation text is immediately cleared from state and localStorage.
 - App-level invariant prevents invalid `regulationSource` from propagating to downstream steps.
-- Build marker: `2026-10-source-validation-v4`.
+- Build marker: `2026-10-source-validation-v6`.
+
+
+## V5 hard invariant
+- Persisted source validation now runs synchronously before React state initialization.
+- Parent-level `updateLesson` / `updateRegulationSource` setters sanitize every write.
+- Mục 1 and Mục 2 render only sanitized values; the status badge and textarea therefore cannot disagree.
+- Invalid regulation source clears dependent Step 1/2/3/5 results.
+- Build marker: `2026-10-source-validation-v6`.

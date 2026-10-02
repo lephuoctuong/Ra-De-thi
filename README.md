@@ -163,3 +163,47 @@ git push -u origin main
 ## 8. Lưu ý quan trọng
 
 ZIP này được tối ưu để **không phụ thuộc cứng vào một văn bản quy định cụ thể**. File ZIP nguồn người dùng cung cấp hiện không chứa một file PDF/Word riêng của văn bản quy định mới; vì vậy ứng dụng được thiết kế theo mô hình **source-driven**: giáo viên cung cấp văn bản chính thức ở Bước 0, sau đó toàn bộ quy trình sử dụng chính nguồn đó.
+
+## 9. Cấu hình Gemini và triển khai Vercel
+
+- Ứng dụng sử dụng **Google GenAI SDK `@google/genai` 2.24.x** ở phía server.
+- Model mặc định: **`gemini-3.8-flash`**.
+- Fallback khi lỗi tạm thời/quota: `gemini-3.7-flash` → `gemini-3.6-flash` → `gemini-3.5-flash`.
+- Không còn cấu hình/model model Gemini thế hệ cũ trong mã nguồn.
+- `GEMINI_API_KEY` chỉ được đọc ở server (`process.env.GEMINI_API_KEY`), không được inject vào Vite/frontend bundle.
+- Trên Vercel, khai báo `GEMINI_API_KEY` trong **Project Settings → Environment Variables**; không commit `.env.local`.
+- Bước 0 kiểm tra kết quả số hóa trước khi lưu: các chuỗi lỗi/fallback của Gemini không được phép trở thành `lesson` hoặc `regulationSource`.
+- Trên Vercel, tệp gửi tới `/api/extract-text` được giới hạn thực tế ở **3 MB/tệp** để chừa headroom cho payload Base64/JSON dưới giới hạn request 4.5 MB của Vercel; tài liệu lớn cần chia nhỏ hoặc dán trực tiếp nội dung.
+- Kết quả số hóa quá lớn cũng được chặn trước khi trả về để tránh vượt giới hạn response của Vercel.
+
+### Triển khai GitHub → Vercel
+
+1. Đẩy toàn bộ thư mục dự án lên GitHub.
+2. Import repository vào Vercel.
+3. Giữ Build Command: `npm run build:web`.
+4. Output Directory: `dist`.
+5. Thêm biến môi trường:
+   `GEMINI_API_KEY=<API_KEY_CỦA_BẠN>`
+6. Deploy và kiểm tra các endpoint `/api/*`.
+
+**Lưu ý về dữ liệu server:** Vercel Functions không phải hệ thống lưu trữ dữ liệu bền vững. Các file JSON `student-exams-vault.json` và `student-submissions.json` vẫn được giữ nguyên trong source ZIP và được dùng tốt khi chạy Node server truyền thống, nhưng khi triển khai serverless trên Vercel, dữ liệu ghi mới vào filesystem không nên được xem là kho dữ liệu lâu dài. Nếu cần lưu trữ bền vững trên Vercel, nên bổ sung database/object storage ở một phiên bản riêng mà không thay đổi quy trình nghiệp vụ hiện tại.
+
+
+
+## Deployment note — source validation v2
+
+This build contains a self-healing migration for legacy `localStorage` values that were incorrectly storing the extraction fallback text in Mục 1/Mục 2. It also marks the HTML entry point as `no-store` on Vercel to reduce stale-shell issues.
+
+After importing a new commit into Vercel, open the deployment URL and perform one hard refresh. The build marker is available as the HTML meta tag `app-build=2026-10-02-source-validation-v2`.
+
+If Mục 2 still shows a green “Đã có văn bản quy định” badge while its textarea contains the fallback sentence beginning “Bạn chưa cung cấp hình ảnh...”, the browser is executing an older deployment and not this build.
+
+## Deployment verification for V3 source-validation fix
+
+This source package contains build marker `2026-10-source-validation-v3` in `index.html`.
+After deploying to Vercel, open the new deployment URL and perform a hard refresh (`Ctrl+Shift+R`).
+The Mục 2 status must be red/"Chưa cung cấp văn bản quy định" when the textarea contains any extraction fallback such as:
+
+`Bạn chưa cung cấp nội dung văn bản hoặc hình ảnh tài liệu cần trích xuất...`
+
+The green `✓ Đã có văn bản quy định` state is reserved for actual user-provided regulation content.

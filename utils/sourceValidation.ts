@@ -7,6 +7,8 @@
 
 const EXTRACTION_FALLBACK_PATTERNS = [
   'có vẻ như bạn chưa cung cấp',
+  'dạ, bạn chưa cung cấp',
+  'da, bạn chưa cung cấp',
   'có vẻ như chưa có nội dung',
   'bạn chưa cung cấp hình ảnh',
   'bạn chưa cung cấp nội dung',
@@ -63,6 +65,14 @@ export const isExtractionFallback = (text: string): boolean => {
 
   // Markdown/chat variants that explicitly ask the user to provide source data.
   if (/bạn\s+(?:vui\s+lòng|hãy)\s+(?:tải\s+lên|gửi|dán)/.test(head) && extractionAction.test(head)) return true;
+
+  // Hard semantic guard for the exact family of messages visible in the UI: a
+  // short assistant-style response that says the user has not supplied a source
+  // and then asks for an upload/paste can never be treated as source material.
+  const asksForSource = /(?:bạn|thầy\s*[/&]?cô)\s+(?:chưa\s+cung\s+cấp|vui\s+lòng|hãy|cần)\b/.test(head);
+  const sourceNouns = /(?:hình\s+ảnh|ảnh|nội\s+dung|văn\s+bản|tài\s+liệu|tệp|file)/.test(head);
+  const asksToProcess = /(?:trích\s+xuất|số\s+hóa|xử\s+lý|cung\s+cấp|tải\s+lên|gửi|dán|paste)/.test(head);
+  if (asksForSource && sourceNouns && asksToProcess && head.length < 900) return true;
 
   return false;
 };

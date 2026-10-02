@@ -1,21 +1,21 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 
 import mammoth from "mammoth";
+import { EXTRACTION_INVALID_MESSAGE, isValidExtractedText, isValidSourceText } from "./utils/sourceValidation";
 
-const app = express();
+export const app = express();
 const PORT = 3000;
 
 // Enable JSON and URL-encoded bodies with higher limits to support large documents and digitized materials
-app.use(express.json({ limit: "100mb" }));
-app.use(express.urlencoded({ limit: "100mb", extended: true }));
+app.use(express.json({ limit: "6mb" }));
+app.use(express.urlencoded({ limit: "6mb", extended: true }));
 
 // Helper to initialize Gemini client
 function getGeminiClient() {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error("GEMINI_API_KEY is not configured in settings or environment.");
   }
@@ -37,10 +37,10 @@ async function generateContentWithRetry(ai: any, params: {
 }, maxRetriesPerModel = 2, initialDelay = 1000) {
   // Construct dynamic fallback path with modern stable models
   const candidateModels: string[] = [];
-  const requestedModel = params.model || "gemini-2.5-flash";
+  const requestedModel = params.model || "gemini-3.8-flash";
   candidateModels.push(requestedModel);
 
-  const fallbackList = ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite"];
+  const fallbackList = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"];
   for (const m of fallbackList) {
     if (!candidateModels.includes(m)) {
       candidateModels.push(m);
@@ -136,7 +136,7 @@ app.post("/api/generate-questions", async (req, res) => {
     4. CẤU TRÚC: Phải trả về JSON mảng đối tượng.`;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.5-flash",
+      model: "gemini-3.8-flash",
       contents: `Soạn ${count} câu hỏi ${type === "TracNghiem" ? "Trắc nghiệm" : "Tự luận"} mức độ ${level || "NB"} về ${topic}.`,
       config: {
         systemInstruction,
@@ -193,7 +193,7 @@ app.post("/api/extract-questions-from-doc", async (req, res) => {
     3. Phân loại mức độ (NB, TH, VD, VDC) dựa trên nội dung.`;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.5-flash",
+      model: "gemini-3.8-flash",
       contents: [
         { inlineData: { data: base64Data, mimeType: mimeType || "application/pdf" } },
         { text: prompt }
@@ -253,7 +253,7 @@ app.post("/api/extract-matrix-from-image", async (req, res) => {
     3. Nếu giá trị nào không có, hãy để là 0.`;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.5-flash",
+      model: "gemini-3.8-flash",
       contents: [
         { inlineData: { data: base64Data, mimeType: mimeType || "image/png" } },
         { text: prompt }
@@ -296,7 +296,7 @@ app.post("/api/suggest-smart-matrix", async (req, res) => {
     const ai = getGeminiClient();
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.5-flash",
+      model: "gemini-3.8-flash",
       contents: `Gợi ý ma trận ${totalQuestions} câu cho môn ${subject}. Các chủ đề: ${topics ? topics.join(', ') : ""}. Kho hiện có: ${inventoryStr || ""}`,
       config: {
         responseMimeType: "application/json",
@@ -341,13 +341,26 @@ app.post("/api/extract-text", async (req, res) => {
     if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || fileName?.endsWith(".docx")) {
       const buffer = Buffer.from(base64, "base64");
       const result = await mammoth.extractRawText({ buffer });
-      return res.json({ text: result.value });
+      const text = result.value?.trim() || "";
+      if (!isValidExtractedText(text)) {
+        return res.status(422).json({ error: EXTRACTION_INVALID_MESSAGE });
+      }
+      if (Buffer.byteLength(JSON.stringify({ text }), "utf8") > 4 * 1024 * 1024) {
+        return res.status(422).json({ error: "Nội dung sau khi số hóa quá lớn để truyền qua Vercel. Thầy/Cô vui lòng chia nhỏ tài liệu rồi tải từng phần." });
+      }
+      return res.json({ text });
     }
 
     // 2. If it's a plain text file (.txt)
     if (mimeType === "text/plain" || fileName?.endsWith(".txt")) {
-      const decoded = Buffer.from(base64, "base64").toString("utf-8");
-      return res.json({ text: decoded });
+      const text = Buffer.from(base64, "base64").toString("utf-8").trim();
+      if (!isValidExtractedText(text)) {
+        return res.status(422).json({ error: EXTRACTION_INVALID_MESSAGE });
+      }
+      if (Buffer.byteLength(JSON.stringify({ text }), "utf8") > 4 * 1024 * 1024) {
+        return res.status(422).json({ error: "Nội dung sau khi số hóa quá lớn để truyền qua Vercel. Thầy/Cô vui lòng chia nhỏ tài liệu rồi tải từng phần." });
+      }
+      return res.json({ text });
     }
 
     // 3. For PDF or Images, we let Gemini process with multimodal capability
@@ -364,7 +377,7 @@ app.post("/api/extract-text", async (req, res) => {
     }
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.5-flash",
+      model: "gemini-3.8-flash",
       contents: [
         {
           inlineData: {
@@ -376,7 +389,20 @@ app.post("/api/extract-text", async (req, res) => {
       ],
     });
 
-    res.json({ text: response.text });
+    const extractedText = response.text?.trim() || "";
+    if (!isValidExtractedText(extractedText)) {
+      return res.status(422).json({ error: EXTRACTION_INVALID_MESSAGE });
+    }
+
+    // Keep the JSON response below Vercel's 4.5 MB response limit with headroom.
+    const responseBytes = Buffer.byteLength(JSON.stringify({ text: extractedText }), "utf8");
+    if (responseBytes > 4 * 1024 * 1024) {
+      return res.status(422).json({
+        error: "Nội dung sau khi số hóa quá lớn để truyền qua Vercel. Thầy/Cô vui lòng chia nhỏ tài liệu rồi tải từng phần."
+      });
+    }
+
+    res.json({ text: extractedText });
   } catch (error) {
     handleRouteError(res, error);
   }
@@ -403,7 +429,7 @@ app.post("/api/detect-figures", async (req, res) => {
 Bắt buộc trả về đúng định dạng JSON được chỉ định.`;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.5-flash",
+      model: "gemini-3.8-flash",
       contents: [
         {
           inlineData: {
@@ -414,7 +440,6 @@ Bắt buộc trả về đúng định dạng JSON được chỉ định.`;
         { text: systemPrompt }
       ],
       config: {
-        temperature: 0.1,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -465,7 +490,7 @@ app.post("/api/generate/step1", async (req, res) => {
   try {
     const { lesson, regulationSource, sampleExam, matrix, prompt, subject, grade } = req.body;
 
-    if (!regulationSource || typeof regulationSource !== "string" || regulationSource.trim().length === 0) {
+    if (!isValidSourceText(regulationSource)) {
       return res.status(400).json({
         error: "Mục '2. văn bản quy định (văn bản quy định)' là nguồn bắt buộc do người dùng cung cấp. Vui lòng cung cấp văn bản quy định tại Bước 0 trước khi tiến hành phân tích!"
       });
@@ -511,10 +536,9 @@ LƯU Ý QUAN TRỌNG:
     `;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.5-flash",
+      model: "gemini-3.8-flash",
       contents: textPrompt,
       config: {
-        temperature: 0.2,
       },
     });
 
@@ -530,7 +554,7 @@ app.post("/api/generate/step2", async (req, res) => {
     const { lesson, regulationSource, sampleExam, matrix, step1Result, prompt, durationMinutes, examDuration, subject, grade } = req.body;
     const activeDuration = durationMinutes || examDuration || 45;
 
-    if (!regulationSource || typeof regulationSource !== "string" || regulationSource.trim().length === 0) {
+    if (!isValidSourceText(regulationSource)) {
       return res.status(400).json({
         error: "Mục '2. văn bản quy định (văn bản quy định)' là nguồn bắt buộc do người dùng cung cấp. Vui lòng cung cấp văn bản quy định tại Bước 0 trước khi xây dựng Ma trận & Bản đặc tả!"
       });
@@ -563,10 +587,9 @@ ${prompt}
     `;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.5-flash",
+      model: "gemini-3.8-flash",
       contents: textPrompt,
       config: {
-        temperature: 0.2,
       },
     });
 
@@ -584,7 +607,7 @@ app.post("/api/generate/step3", async (req, res) => {
     const resolvedSubject = (subject && subject !== 'Chung' ? subject : 'Sinh học').toUpperCase();
     const resolvedGrade = grade ? `LỚP ${grade}` : 'LỚP 9';
 
-    if (!regulationSource || typeof regulationSource !== "string" || regulationSource.trim().length === 0) {
+    if (!isValidSourceText(regulationSource)) {
       return res.status(400).json({
         error: "Mục '2. văn bản quy định (văn bản quy định)' là nguồn bắt buộc do người dùng cung cấp. Vui lòng cung cấp văn bản quy định tại Bước 0 trước khi tạo Đề kiểm tra định kì!"
       });
@@ -636,10 +659,9 @@ Chú ý: Công thức toán và phương trình hóa học phải trình bày ch
     `;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.5-flash",
+      model: "gemini-3.8-flash",
       contents: textPrompt,
       config: {
-        temperature: 0.3,
       },
     });
 
@@ -661,7 +683,7 @@ app.post("/api/generate/step5", async (req, res) => {
     const resolvedSubject = (subject && subject !== 'Chung' ? subject : 'Sinh học').toUpperCase();
     const resolvedGrade = grade ? `LỚP ${grade}` : 'LỚP 9';
 
-    if (!regulationSource || typeof regulationSource !== "string" || regulationSource.trim().length === 0) {
+    if (!isValidSourceText(regulationSource)) {
       return res.status(400).json({
         error: "Mục '2. văn bản quy định (văn bản quy định)' là nguồn bắt buộc do người dùng cung cấp. Vui lòng cung cấp văn bản quy định tại Bước 0 trước khi tạo mã đề tương đương!"
       });
@@ -701,10 +723,9 @@ Chú ý: Công thức toán và phương trình hóa học phải dùng chuẩn 
     `;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.5-flash",
+      model: "gemini-3.8-flash",
       contents: textPrompt,
       config: {
-        temperature: 0.4,
       },
     });
 
@@ -1729,7 +1750,7 @@ LƯU Ý QUAN TRỌNG:
 Hãy thực hiện đầy đủ 8 bước của Quy trình chấm tự động, kiểm tra 10 CHECKS chống chấm sai, đối chiếu 5 quan hệ đồng bộ, thực hiện 10 bước Kiểm Tra Cuối, xuất bảng kết quả từng câu có minh chứng truy vết và xuất JSON theo đúng cấu trúc.`;
 
     const response = await generateContentWithRetry(ai, {
-      model: "gemini-3.5-flash",
+      model: "gemini-3.8-flash",
       contents: userPrompt,
       config: {
         systemInstruction,
@@ -1941,9 +1962,12 @@ app.use((err: any, req: any, res: any, next: any) => {
   next();
 });
 
-// Serve frontend with Vite middleware in development
+// Serve the frontend only for the traditional local Node server.
+// On Vercel, the Express app is exported through api/[...path].ts and the
+// Vite build is served as static output by the platform.
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -1952,7 +1976,6 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    // Support single page application fallback
     app.get('*all', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
@@ -1963,4 +1986,9 @@ async function startServer() {
   });
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer().catch((error) => {
+    console.error("Failed to start local server:", error);
+    process.exit(1);
+  });
+}
