@@ -1,12 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build:web",
-  "outputDirectory": "dist",
-  "functions": {
-    "api/[...path].ts": {
-      "maxDuration": 60
-    }
-  },
   "headers": [
     {
       "source": "/",

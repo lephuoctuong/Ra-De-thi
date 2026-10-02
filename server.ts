@@ -16,12 +16,12 @@ import { EXTRACTION_INVALID_MESSAGE, isValidExtractedText, isValidSourceText } f
 
 export const app = express();
 
-const BUILD_ID = "2026-10-source-validation-v8";
+const BUILD_ID = "2026-10-source-validation-v10";
 const PRIMARY_GEMINI_MODEL = "gemini-3.8-flash";
 
-// Vercel/Express entrypoint: Vercel detects the default export from server.ts.
-// Keep the same Express instance for local Node and Vercel deployments.
-const PORT = 3000;
+// Vercel Express entrypoint: Vercel detects this root server.ts and its default export.
+// The same Express instance is used locally and on Vercel.
+const PORT = Number(process.env.PORT || 3000);
 
 // Enable JSON and URL-encoded bodies with higher limits to support large documents and digitized materials
 app.use(express.json({ limit: "6mb" }));
@@ -58,14 +58,33 @@ function normalizeGeminiContents(contents: any) {
     return [{ role: "user", parts: [{ text: String(contents ?? "") }] }];
   }
 
-  // The previous SDK accepted a mixed array such as:
-  // [{ inlineData: {...} }, "instruction"]. Convert that form to the REST shape.
   const parts = contents.flatMap((item: any) => {
     if (typeof item === "string") return [{ text: item }];
     if (item?.text) return [{ text: item.text }];
-    if (item?.inlineData) return [{ inline_data: item.inlineData }];
-    if (item?.inline_data) return [{ inline_data: item.inline_data }];
-    if (item?.fileData) return [{ file_data: item.fileData }];
+    if (item?.inlineData) {
+      return [{
+        inline_data: {
+          mime_type: item.inlineData.mimeType || item.inlineData.mime_type,
+          data: item.inlineData.data,
+        },
+      }];
+    }
+    if (item?.inline_data) {
+      return [{
+        inline_data: {
+          mime_type: item.inline_data.mimeType || item.inline_data.mime_type,
+          data: item.inline_data.data,
+        },
+      }];
+    }
+    if (item?.fileData) {
+      return [{
+        file_data: {
+          mime_type: item.fileData.mimeType || item.fileData.mime_type,
+          file_uri: item.fileData.fileUri || item.fileData.file_uri,
+        },
+      }];
+    }
     if (item?.file_data) return [{ file_data: item.file_data }];
     return [];
   });
@@ -76,34 +95,41 @@ function normalizeGeminiContents(contents: any) {
 // Direct REST call to Gemini generateContent. This is intentionally server-side only.
 async function callGeminiRest(apiKey: string, model: string, params: { contents: any; config?: any }) {
   const config = params.config || {};
-  const { systemInstruction, responseMimeType, responseSchema, ...generationConfig } = config;
+  const { systemInstruction, responseMimeType, responseSchema, thinkingConfig, ...otherGenerationConfig } = config;
 
   const body: any = {
     contents: normalizeGeminiContents(params.contents),
   };
 
+  // Gemini REST accepts the documented JSON field names used by the REST examples.
   if (systemInstruction) {
-    body.systemInstruction = {
-      role: "system",
+    body.system_instruction = {
       parts: [{ text: systemInstruction }],
     };
   }
 
-  if (responseMimeType || responseSchema || Object.keys(generationConfig).length > 0) {
-    body.generationConfig = { ...generationConfig };
-    if (responseMimeType) body.generationConfig.responseMimeType = responseMimeType;
-    if (responseSchema) body.generationConfig.responseSchema = responseSchema;
+  const generationConfig: any = { ...otherGenerationConfig };
+  if (responseMimeType) generationConfig.response_mime_type = responseMimeType;
+  if (responseSchema) generationConfig.response_schema = responseSchema;
+  if (thinkingConfig) {
+    generationConfig.thinking_config = {
+      ...(thinkingConfig.thinkingLevel ? { thinking_level: thinkingConfig.thinkingLevel } : {}),
+      ...(thinkingConfig.includeThoughts !== undefined ? { include_thoughts: thinkingConfig.includeThoughts } : {}),
+    };
+  }
+  if (Object.keys(generationConfig).length > 0) {
+    body.generation_config = generationConfig;
   }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 55000);
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
     const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "User-Agent": "ra-de-thi-vercel/8",
+        "x-goog-api-key": apiKey,
       },
       body: JSON.stringify(body),
       signal: controller.signal,
@@ -200,6 +226,12 @@ const handleRouteError = (res: any, error: any) => {
   if (errorStr.includes("missing_gemini_api_key") || errorStr.includes("gemini_api_key chưa được cấu hình") || errorStr.includes("gemini_api_key is not configured")) {
     status = 503; code = "MISSING_GEMINI_API_KEY";
     errorMsg = "Máy chủ chưa được cấu hình GEMINI_API_KEY. Vào Vercel → Project Settings → Environment Variables, thêm GEMINI_API_KEY rồi Redeploy. API key chỉ nằm ở máy chủ và không được đưa vào frontend.";
+  } else if (errorStr.includes("gemini_http_404")) {
+    status = 502; code = "GEMINI_MODEL_OR_ENDPOINT";
+    errorMsg = "Gemini API không tìm thấy model/endpoint được cấu hình. Hệ thống đang dùng gemini-3.8-flash; hãy kiểm tra project/API access.";
+  } else if (errorStr.includes("gemini_http_500") || errorStr.includes("gemini_http_502")) {
+    status = 502; code = "GEMINI_PROVIDER_ERROR";
+    errorMsg = "Gemini API trả lỗi máy chủ (5xx). Hệ thống đã thử lại model; vui lòng thử lại sau ít phút.";
   } else if (errorStr.includes("503") || errorStr.includes("unavailable") || errorStr.includes("high demand")) {
     status = 503; code = "GEMINI_UNAVAILABLE";
     errorMsg = "Máy chủ AI của Google đang quá tải tạm thời (503). Hệ thống đã thử lại; vui lòng thử lại sau ít phút.";
@@ -2069,35 +2101,14 @@ app.use((err: any, req: any, res: any, next: any) => {
   next();
 });
 
-// Vercel zero-config Express detection requires a default export from server.ts.
+// Single Vercel Express entrypoint. Vercel detects the root server.ts file
+// and invokes the default-exported Express application directly.
 export default app;
 
-// Serve the frontend only for the traditional local Node server.
-// On Vercel, the default-exported Express app is handled by Vercel's Node/Express runtime; the Vite build is served as static output by the platform.
-async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*all', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT} with NODE_ENV=${process.env.NODE_ENV}`);
-  });
-}
-
+// Local-only listener. Vercel invokes the exported Express app directly.
 if (!process.env.VERCEL) {
-  startServer().catch((error) => {
-    console.error("Failed to start local server:", error);
-    process.exit(1);
+  app.listen(PORT, () => {
+    console.log(`Ra-De-thi API running at http://localhost:${PORT}`);
   });
 }
