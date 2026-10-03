@@ -24,8 +24,8 @@ const PRIMARY_GEMINI_MODEL = "gemini-3.8-flash";
 
 
 // Enable JSON and URL-encoded bodies with higher limits to support large documents and digitized materials
-app.use(express.json({ limit: "6mb" }));
-app.use(express.urlencoded({ limit: "6mb", extended: true }));
+app.use(express.json({ limit: "4mb" }));
+app.use(express.urlencoded({ limit: "4mb", extended: true }));
 
 // Lightweight deployment/API diagnostic. This route never calls Gemini.
 app.get("/api/health", (_req, res) => {
@@ -462,29 +462,304 @@ app.post("/api/suggest-smart-matrix", async (req, res) => {
 });
 
 // API: Document digitization support for PDF, Word (.docx), TXT, and Images
+// API: Document digitization support for PDF, Word (.docx), TXT, and Images
 app.post("/api/extract-text", async (req, res) => {
+  const requestId = `extract-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+
   try {
-    const { base64, mimeType, fileName } = req.body;
+    console.log(`[${requestId}] /api/extract-text: bắt đầu xử lý`);
+
+    const { base64, mimeType, fileName } = req.body ?? {};
+
+    // ------------------------------------------------------------
+    // 1. Kiểm tra dữ liệu đầu vào
+    // ------------------------------------------------------------
     if (!base64 || typeof base64 !== "string") {
-      return res.status(400).json({ error: "Không tìm thấy nội dung tệp ở dạng base64." });
-    }
-    if (base64.length > 5_500_000) {
-      return res.status(413).json({ error: "Tệp sau khi mã hóa Base64 quá lớn cho Vercel. Vui lòng chia nhỏ tài liệu hoặc giảm dung lượng tệp." });
+      console.error(
+        `[${requestId}] Thiếu base64. mimeType=${mimeType || "unknown"}, fileName=${fileName || "unknown"}`
+      );
+
+      return res.status(400).json({
+        error: "Không tìm thấy nội dung tệp ở dạng base64.",
+        code: "MISSING_BASE64",
+      });
     }
 
-    // 1. If it's a Word document (.docx)
-    if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || fileName?.endsWith(".docx")) {
-      const buffer = Buffer.from(base64, "base64");
-      const { default: mammoth } = await import("mammoth");
-      const result = await mammoth.extractRawText({ buffer });
-      const text = result.value?.trim() || "";
-      if (!isValidExtractedText(text)) {
-        return res.status(422).json({ error: EXTRACTION_INVALID_MESSAGE });
+    const normalizedFileName =
+      typeof fileName === "string" ? fileName.trim().toLowerCase() : "";
+
+    const normalizedMimeType =
+      typeof mimeType === "string" ? mimeType.trim().toLowerCase() : "";
+
+    // Base64 thường chiếm khoảng 4/3 kích thước file gốc.
+    // Giữ headroom để tránh request quá sát giới hạn serverless.
+    const MAX_BASE64_LENGTH = 5_000_000;
+
+    if (base64.length > MAX_BASE64_LENGTH) {
+      console.warn(
+        `[${requestId}] Base64 quá lớn: ${base64.length} characters`
+      );
+
+      return res.status(413).json({
+        error:
+          "Tệp sau khi mã hóa Base64 quá lớn để xử lý an toàn trên Vercel. Thầy/Cô vui lòng giảm dung lượng tệp hoặc chia nhỏ tài liệu.",
+        code: "FILE_TOO_LARGE",
+      });
+    }
+
+    // Kiểm tra Base64 cơ bản.
+    // Cho phép chuỗi có khoảng trắng/xuống dòng vì một số trình duyệt
+    // hoặc thư viện có thể tạo Base64 theo nhiều dòng.
+    const compactBase64 = base64.replace(/\s+/g, "");
+
+    if (
+      compactBase64.length < 8 ||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(compactBase64)
+    ) {
+      console.error(`[${requestId}] Base64 không hợp lệ`);
+
+      return res.status(400).json({
+        error: "Dữ liệu tệp Base64 không hợp lệ.",
+        code: "INVALID_BASE64",
+      });
+    }
+
+    console.log(
+      `[${requestId}] file=${normalizedFileName || "unknown"}, mime=${normalizedMimeType || "unknown"}, base64Length=${compactBase64.length}`
+    );
+
+    // ------------------------------------------------------------
+    // 2. Hàm kiểm tra kích thước response
+    // ------------------------------------------------------------
+    const sendExtractedText = (text: string) => {
+      const extractedText = String(text || "").trim();
+
+      if (!isValidExtractedText(extractedText)) {
+        return res.status(422).json({
+          error: EXTRACTION_INVALID_MESSAGE,
+          code: "EXTRACTION_INVALID",
+        });
       }
-      if (Buffer.byteLength(JSON.stringify({ text }), "utf8") > 4 * 1024 * 1024) {
-        return res.status(422).json({ error: "Nội dung sau khi số hóa quá lớn để truyền qua Vercel. Thầy/Cô vui lòng chia nhỏ tài liệu rồi tải từng phần." });
+
+      // Giữ headroom dưới giới hạn response của Vercel.
+      const responseBytes = Buffer.byteLength(
+        JSON.stringify({ text: extractedText }),
+        "utf8"
+      );
+
+      console.log(
+        `[${requestId}] extractedTextBytes=${responseBytes}`
+      );
+
+      if (responseBytes > 4 * 1024 * 1024) {
+        return res.status(422).json({
+          error:
+            "Nội dung sau khi số hóa quá lớn để truyền qua Vercel. Thầy/Cô vui lòng chia nhỏ tài liệu rồi tải từng phần.",
+          code: "EXTRACTED_TEXT_TOO_LARGE",
+        });
       }
-      return res.json({ text });
+
+      return res.json({
+        text: extractedText,
+      });
+    };
+
+    // ------------------------------------------------------------
+    // 3. Xác định loại tài liệu
+    // ------------------------------------------------------------
+    const isDocx =
+      normalizedMimeType ===
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      normalizedFileName.endsWith(".docx");
+
+    const isTxt =
+      normalizedMimeType === "text/plain" ||
+      normalizedFileName.endsWith(".txt");
+
+    const isPdf =
+      normalizedMimeType === "application/pdf" ||
+      normalizedFileName.endsWith(".pdf");
+
+    const isPng =
+      normalizedMimeType === "image/png" ||
+      normalizedFileName.endsWith(".png");
+
+    const isJpeg =
+      normalizedMimeType === "image/jpeg" ||
+      normalizedMimeType === "image/jpg" ||
+      normalizedFileName.endsWith(".jpg") ||
+      normalizedFileName.endsWith(".jpeg");
+
+    const isWebp =
+      normalizedMimeType === "image/webp" ||
+      normalizedFileName.endsWith(".webp");
+
+    // ------------------------------------------------------------
+    // 4. DOCX → Mammoth
+    // ------------------------------------------------------------
+    if (isDocx) {
+      console.log(`[${requestId}] Đang xử lý DOCX bằng Mammoth`);
+
+      try {
+        const buffer = Buffer.from(compactBase64, "base64");
+
+        if (!buffer.length) {
+          return res.status(400).json({
+            error: "Tệp DOCX không có dữ liệu.",
+            code: "EMPTY_DOCX",
+          });
+        }
+
+        const { default: mammoth } = await import("mammoth");
+
+        const result = await mammoth.extractRawText({
+          buffer,
+        });
+
+        const text = result.value?.trim() || "";
+
+        console.log(
+          `[${requestId}] DOCX extraction hoàn tất: ${text.length} characters`
+        );
+
+        return sendExtractedText(text);
+      } catch (docxError: any) {
+        console.error(
+          `[${requestId}] Lỗi xử lý DOCX:`,
+          docxError?.message || docxError
+        );
+
+        return res.status(422).json({
+          error:
+            "Không thể đọc tệp Word (.docx). Vui lòng kiểm tra tệp có bị hỏng hoặc thử lưu lại tệp Word rồi tải lên.",
+          code: "DOCX_EXTRACTION_FAILED",
+        });
+      }
+    }
+
+    // ------------------------------------------------------------
+    // 5. TXT → đọc trực tiếp
+    // ------------------------------------------------------------
+    if (isTxt) {
+      console.log(`[${requestId}] Đang xử lý TXT`);
+
+      try {
+        const text = Buffer.from(compactBase64, "base64")
+          .toString("utf-8")
+          .trim();
+
+        console.log(
+          `[${requestId}] TXT extraction hoàn tất: ${text.length} characters`
+        );
+
+        return sendExtractedText(text);
+      } catch (txtError: any) {
+        console.error(
+          `[${requestId}] Lỗi xử lý TXT:`,
+          txtError?.message || txtError
+        );
+
+        return res.status(422).json({
+          error: "Không thể đọc tệp văn bản TXT.",
+          code: "TXT_EXTRACTION_FAILED",
+        });
+      }
+    }
+
+    // ------------------------------------------------------------
+    // 6. PDF / Images → Gemini multimodal
+    // ------------------------------------------------------------
+    //
+    // Các loại được hỗ trợ:
+    // - PDF
+    // - PNG
+    // - JPG/JPEG
+    // - WEBP
+    //
+    // Nếu frontend không gửi MIME type nhưng có phần mở rộng file,
+    // chúng ta suy ra MIME type từ tên file.
+    // ------------------------------------------------------------
+    let currentMimeType = normalizedMimeType || "";
+
+    if (isPdf) {
+      currentMimeType = "application/pdf";
+    } else if (isPng) {
+      currentMimeType = "image/png";
+    } else if (isJpeg) {
+      currentMimeType = "image/jpeg";
+    } else if (isWebp) {
+      currentMimeType = "image/webp";
+    }
+
+    // Nếu MIME type không nằm trong nhóm được hỗ trợ,
+    // báo lỗi rõ ràng thay vì gửi request không hợp lệ tới Gemini.
+    const supportedMimeTypes = new Set([
+      "application/pdf",
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+    ]);
+
+    if (!supportedMimeTypes.has(currentMimeType)) {
+      console.warn(
+        `[${requestId}] Loại tệp không được hỗ trợ: ${currentMimeType || "unknown"}`
+      );
+
+      return res.status(415).json({
+        error:
+          "Định dạng tệp chưa được hỗ trợ. Vui lòng sử dụng PDF, PNG, JPG/JPEG, WEBP, DOCX hoặc TXT.",
+        code: "UNSUPPORTED_FILE_TYPE",
+      });
+    }
+
+    console.log(
+      `[${requestId}] Đang gửi ${currentMimeType} sang Gemini`
+    );
+
+    const ai = getGeminiClient();
+
+    const extractionPrompt =
+      "Hãy trích xuất và số hóa toàn bộ nội dung văn bản cốt lõi trong tài liệu này một cách chính xác nhất và đầy đủ tất cả các dòng, chương mục. " +
+      "Với công thức toán, hãy giữ nguyên và chuyển sang định dạng LaTeX chuẩn " +
+      "(bọc trong \\( ... \\) hoặc \\[ ... \\] đối với toán dòng và toán khối). " +
+      "Chỉ trả về nội dung văn bản được số hóa, không thêm vào lời giải thích hay lời bàn của bạn.";
+
+    const response = await generateContentWithRetry(ai, {
+      model: PRIMARY_GEMINI_MODEL,
+      contents: [
+        extractionPrompt,
+        {
+          inlineData: {
+            data: compactBase64,
+            mimeType: currentMimeType,
+          },
+        },
+      ],
+      config: {
+        thinkingConfig: {
+          thinkingLevel: "low",
+        },
+      },
+    });
+
+    const extractedText = response.text?.trim() || "";
+
+    console.log(
+      `[${requestId}] Gemini extraction hoàn tất: ${extractedText.length} characters`
+    );
+
+    return sendExtractedText(extractedText);
+  } catch (error: any) {
+    console.error(
+      `[${requestId}] /api/extract-text FAILED:`,
+      error?.message || error
+    );
+
+    return handleRouteError(res, error);
+  }
+});
     }
 
     // 2. If it's a plain text file (.txt)
