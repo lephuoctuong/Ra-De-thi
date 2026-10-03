@@ -21,7 +21,7 @@ const PRIMARY_GEMINI_MODEL = "gemini-3.8-flash";
 
 // Vercel Express entrypoint: Vercel detects this root server.ts and its default export.
 // The same Express instance is used locally and on Vercel.
-const PORT = Number(process.env.PORT || 3000);
+
 
 // Enable JSON and URL-encoded bodies with higher limits to support large documents and digitized materials
 app.use(express.json({ limit: "6mb" }));
@@ -2105,10 +2105,3 @@ app.use((err: any, req: any, res: any, next: any) => {
 // and invokes the default-exported Express application directly.
 export default app;
 
-
-// Local-only listener. Vercel invokes the exported Express app directly.
-if (!process.env.VERCEL) {
-  app.listen(PORT, () => {
-    console.log(`Ra-De-thi API running at http://localhost:${PORT}`);
-  });
-}

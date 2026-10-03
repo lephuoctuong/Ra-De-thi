@@ -4,11 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "tsx dev-server.ts",
     "build": "vite build",
-    "start": "tsx server.ts",
-    "lint": "tsc --noEmit",
-    "build:web": "vite build"
+    "build:web": "vite build",
+    "start": "tsx dev-server.ts",
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "dexie": "^4.2.1",
