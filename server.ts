@@ -12,7 +12,7 @@ const Type = {
   ARRAY: "ARRAY",
 } as const;
 
-import { EXTRACTION_INVALID_MESSAGE, isValidExtractedText, isValidSourceText } from "./utils/sourceValidation";
+import { EXTRACTION_INVALID_MESSAGE, isValidExtractedText, isValidSourceText } from "./utils/sourceValidation.js";
 
 export const app = express();
 
