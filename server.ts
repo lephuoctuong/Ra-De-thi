@@ -681,8 +681,8 @@ if (isPdf) {
       });
     }
 
-    const pdfParseModule = await import("pdf-parse");
-    const pdfParse = pdfParseModule.default ?? pdfParseModule;
+    const pdfParseModule = await import("pdf-parse/lib/pdf-parse.js");
+   const pdfParse = pdfParseModule.default ?? pdfParseModule;
     const result = await pdfParse(buffer);
 
     const text = (result.text || "").trim();
