@@ -6,8 +6,19 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   server: {
+    // The API server (dev-server.ts) also uses port 3000.
+    // Vite will automatically move to 3001 when 3000 is occupied.
+    // Proxy /api/* back to the API so frontend fetch("/api/...") works
+    // in local development without CORS or "Failed to fetch".
     port: 3000,
     host: "0.0.0.0",
+    proxy: {
+      "/api": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+        secure: false,
+      },
+    },
   },
 
   plugins: [react()],

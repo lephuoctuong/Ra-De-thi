@@ -1,4 +1,4 @@
-import { app } from "./backend";
+import app from "./server";
 
 const PORT = Number(process.env.PORT || 3000);
 

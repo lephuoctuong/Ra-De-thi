@@ -58,7 +58,7 @@ function normalizeGeminiContents(contents: any) {
     return [{ role: "user", parts: [{ text: String(contents ?? "") }] }];
   }
 
-  const parts: any[] = (contents as any[]).flatMap((item: any): any[] => {
+  const parts = contents.flatMap((item: any) => {
     if (typeof item === "string") return [{ text: item }];
     if (item?.text) return [{ text: item.text }];
     if (item?.inlineData) {
@@ -667,52 +667,7 @@ app.post("/api/extract-text", async (req, res) => {
         });
       }
     }
-// 5.5 PDF extraction with pdf-parse
-if (isPdf) {
-  console.log(`[${requestId}] Đang trích xuất PDF bằng pdf-parse`);
 
-  try {
-    const buffer = Buffer.from(compactBase64, "base64");
-
-    if (!buffer.length) {
-      return res.status(400).json({
-        error: "Tệp PDF không có dữ liệu.",
-        code: "EMPTY_PDF",
-      });
-    }
-
-    const pdfParseModule = await import("pdf-parse");
-    const pdfParse = pdfParseModule.default ?? pdfParseModule;
-    const result = await pdfParse(buffer);
-
-    const text = (result.text || "").trim();
-
-    console.log(
-      `[${requestId}] PDF extraction hoàn tất: ${text.length} characters`
-    );
-
-    if (!text) {
-      return res.status(422).json({
-        error:
-          "PDF không chứa lớp văn bản có thể trích xuất. Nếu đây là PDF scan, hãy dùng ảnh PNG/JPG hoặc cần OCR.",
-        code: "PDF_NO_TEXT",
-      });
-    }
-
-    return sendExtractedText(text);
-  } catch (pdfError: any) {
-    console.error(
-      `[${requestId}] Lỗi trích xuất PDF:`,
-      pdfError?.message || pdfError
-    );
-
-    return res.status(422).json({
-      error:
-        "Không thể đọc nội dung PDF. Vui lòng kiểm tra lại tệp PDF.",
-      code: "PDF_EXTRACTION_FAILED",
-    });
-  }
-}
     // ------------------------------------------------------------
     // 6. PDF / Images → Gemini multimodal
     // ------------------------------------------------------------

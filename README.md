@@ -176,7 +176,7 @@ ZIP này được tối ưu để **không phụ thuộc cứng vào một văn 
 
 ## 9. Cấu hình Gemini và triển khai Vercel
 
-- Backend gọi **Gemini API qua REST server-side**; API key chỉ nằm trong `process.env.GEMINI_API_KEY`. Gói `@google/genai` cũ được giữ trong manifest để tránh thay đổi dependency không cần thiết, nhưng không còn được import/runtime sử dụng.
+- Backend gọi **Gemini API qua REST server-side**; API key chỉ nằm trong `process.env.GEMINI_API_KEY`. SDK `@google/genai` không còn là dependency runtime; Gemini được gọi trực tiếp bằng REST server-side để giảm rủi ro bundling/runtime.
 - Model mặc định: **`gemini-3.8-flash`**.
 - Fallback khi lỗi tạm thời/quota: `gemini-3.7-flash` → `gemini-3.6-flash` → `gemini-3.5-flash`.
 - Không còn cấu hình/model model Gemini thế hệ cũ trong mã nguồn.
@@ -191,7 +191,7 @@ ZIP này được tối ưu để **không phụ thuộc cứng vào một văn 
 1. Đẩy toàn bộ thư mục dự án lên GitHub.
 2. Import repository vào Vercel.
 3. Giữ Build Command: `npm run build:web`.
-4. Output Directory: `dist`.
+4. Output Directory: `public`.
 5. Thêm biến môi trường:
    `GEMINI_API_KEY=<API_KEY_CỦA_BẠN>`
 6. Deploy và kiểm tra các endpoint `/api/*`.
@@ -211,7 +211,7 @@ V7 also adds a diagnostic endpoint:
 A successful deployment returns HTTP 200 JSON containing `build: 2026-10-source-validation-v8`. Test this endpoint before testing Gemini.
 
 Vercel Build Command: `npm run build:web`
-Output Directory: `dist`
+Output Directory: `public`
 Node.js: `>=22`
 Environment Variable: `GEMINI_API_KEY` (server-side only)
 
@@ -249,7 +249,7 @@ After deployment, verify:
 
 V9 uses one explicit Vercel API function at `api/[...path].ts`, which imports the Express app from `backend.ts`. The previous competing root `server.ts` entrypoint and stale `package-lock.json` were removed.
 
-Deploy with Build Command `npm run build:web`, Output Directory `dist`, Node.js `24.x`, and server-side environment variable `GEMINI_API_KEY`.
+Deploy with Build Command `npm run build:web`, Output Directory `public`, Node.js `24.x`, and server-side environment variable `GEMINI_API_KEY`.
 
 Verify `https://YOUR-DOMAIN/api/health` before testing Gemini. A successful V9 deployment returns `build: 2026-10-source-validation-v9`.
 
